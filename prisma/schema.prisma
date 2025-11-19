@@ -1,0 +1,373 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Center (Tenant) - Multi-tenant architecture
+model Center {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  logoUrl     String?
+  isActive    Boolean  @default(true)
+  ownerUserId String?
+  
+  // Soft delete
+  isDeleted   Boolean  @default(false)
+  deletedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  ownerUser       User?                 @relation("CenterOwner", fields: [ownerUserId], references: [id])
+  users           User[]                @relation("CenterUsers")
+  roles           Role[]
+  bots            CenterTelegramBot[]
+  paymentCards    CenterPaymentCard[]
+  subscriptions   CenterSubscription[]
+
+  @@index([ownerUserId])
+  @@index([isDeleted])
+  @@map("centers")
+}
+
+// User model - Asosiy user entity (Admin, Teacher, Student)
+model User {
+  id            String    @id @default(uuid())
+  email         String?   @unique  // Optional for Telegram-only users
+  username      String?   @unique
+  password      String?              // Optional for Telegram-only users
+  firstName     String?
+  lastName      String?
+  phoneNumber   String?
+  
+  // User type and authentication
+  userType      UserType  @default(STUDENT)  // ADMIN, TEACHER, STUDENT
+  authProvider  String    @default("local")   // local, telegram, google
+  
+  // Status
+  isActive      Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  
+  // Multi-tenant
+  centerId      String
+  
+  // Telegram integration (optional link)
+  telegramUserId String?   @unique
+  
+  // Soft delete
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  center         Center          @relation("CenterUsers", fields: [centerId], references: [id], onDelete: Cascade)
+  ownedCenters   Center[]        @relation("CenterOwner")
+  userRoles      UserRole[]
+  refreshTokens  RefreshToken[]
+  telegramUser   TelegramUser?   @relation(fields: [telegramUserId], references: [id])
+
+  @@index([centerId])
+  @@index([email])
+  @@index([telegramUserId])
+  @@index([userType])
+  @@index([isDeleted])
+  @@map("users")
+}
+
+// Role model
+model Role {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String
+  description String?
+  isSystem    Boolean  @default(false)
+  centerId    String
+  
+  // Soft delete
+  isDeleted   Boolean  @default(false)
+  deletedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  center          Center           @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([slug, centerId])
+  @@index([centerId])
+  @@index([isDeleted])
+  @@map("roles")
+}
+
+// Permission model
+model Permission {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  module      String
+  action      String
+  
+  // Soft delete
+  isDeleted   Boolean  @default(false)
+  deletedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@index([isDeleted])
+  @@map("permissions")
+}
+
+// UserRole junction table
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// RolePermission junction table
+model RolePermission {
+  id           String   @id @default(uuid())
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  // Relations
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// RefreshToken for JWT authentication
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// TelegramUser - Telegram-specific data
+model TelegramUser {
+  id           String   @id @default(uuid())
+  telegramId   String   @unique  // Telegram user ID (globally unique)
+  centerId     String?             // Optional: qaysi center'dan kelgan
+  
+  // Telegram-specific fields
+  username     String?
+  firstName    String?
+  lastName     String?
+  chatId       String?
+  phoneNumber  String?
+  languageCode String?
+  isBot        Boolean  @default(false)
+  
+  // Status
+  isActive     Boolean  @default(true)
+  status       String?  @default("active") // active, blocked, pending_payment
+  
+  // Additional data
+  metadata     Json?
+  
+  // Soft delete
+  isDeleted    Boolean  @default(false)
+  deletedAt    DateTime?
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user         User?    // Link to main User entity
+
+  @@index([telegramId])
+  @@index([centerId])
+  @@index([isDeleted])
+  @@map("telegram_users")
+}
+
+// Center Telegram Bot - Har bir center uchun bot ma'lumotlari
+model CenterTelegramBot {
+  id          String   @id @default(uuid())
+  centerId    String
+  botToken    String   @unique
+  botUsername String?
+  displayName String?
+  isActive    Boolean  @default(true)
+  
+  // Webhook configuration
+  webhookUrl   String?
+  secretToken  String   @unique
+  webhookSetAt DateTime?
+  
+  // Bot messages
+  welcomeMessage      String?  @db.Text
+  courseInfoTemplate  String?  @db.Text
+  paymentInstruction  String?  @db.Text
+  
+  // Soft delete
+  isDeleted   Boolean  @default(false)
+  deletedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  center Center @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  @@index([centerId])
+  @@index([secretToken])
+  @@index([isDeleted])
+  @@map("center_telegram_bots")
+}
+
+// Center Payment Cards - O'quv markaz to'lov kartalari
+model CenterPaymentCard {
+  id         String   @id @default(uuid())
+  centerId   String
+  
+  // Karta ma'lumotlari
+  cardNumber String   // Masalan: "8600 1234 5678 9012"
+  cardHolder String   // Masalan: "FALCON ACADEMY LLC"
+  bankName   String?  // Masalan: "Uzcard", "Humo", "Visa"
+  cardType   String?  @default("uzcard") // uzcard, humo, visa, mastercard
+  
+  // Status va sozlamalar
+  isActive   Boolean  @default(true)
+  isVisible  Boolean  @default(true)  // Admin bu kartani ko'rsatish/yashirish
+  isPrimary  Boolean  @default(false) // Asosiy karta (default sifatida ko'rsatiladi)
+  
+  // Qo'shimcha ma'lumot
+  description String?  @db.Text // Masalan: "Asosiy karta", "Muddatli to'lovlar uchun"
+  displayOrder Int?    @default(0) // Kartalar tartibini belgilash
+  
+  // Soft delete
+  isDeleted  Boolean  @default(false)
+  deletedAt  DateTime?
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  center Center @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  @@index([centerId])
+  @@index([isVisible])
+  @@index([isPrimary])
+  @@index([isDeleted])
+  @@map("center_payment_cards")
+}
+
+// Tarif rejalar (Plans)
+model Plan {
+  id            String   @id @default(uuid())
+  key           String   @unique
+  name          String
+  description   String?
+  monthlyPrice  Int
+  currency      String   @default("USD")
+  maxStudents   Int?
+  maxTeachers   Int?
+  maxGroups     Int?
+  maxCenters    Int?
+  featuresJson  String?
+  isActive      Boolean  @default(true)
+  
+  // Soft delete
+  isDeleted     Boolean  @default(false)
+  deletedAt     DateTime?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  subscriptions CenterSubscription[]
+
+  @@index([isDeleted])
+  @@map("plans")
+}
+
+// Center Subscription - Obuna ma'lumotlari
+model CenterSubscription {
+  id                     String             @id @default(uuid())
+  centerId               String
+  planId                 String
+  status                 SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart     DateTime
+  currentPeriodEnd       DateTime
+  cancelAtPeriodEnd      Boolean            @default(false)
+  externalCustomerId     String?
+  externalSubscriptionId String?
+  
+  // Soft delete
+  isDeleted              Boolean            @default(false)
+  deletedAt              DateTime?
+  
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  // Relations
+  center Center @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  plan   Plan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([centerId])
+  @@index([planId])
+  @@index([status])
+  @@index([isDeleted])
+  @@map("center_subscriptions")
+}
+
+// Subscription Status Enum
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+// User Type Enum
+enum UserType {
+  ADMIN      // System administrator
+  TEACHER    // O'qituvchi
+  STUDENT    // O'quvchi
+  PARENT     // Ota-ona (optional, future use)
+}

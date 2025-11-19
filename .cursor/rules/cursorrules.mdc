@@ -1,0 +1,589 @@
+---
+alwaysApply: true
+---
+
+# NestJS Multi-Tenant SaaS Platform - Cursor Rules
+
+## Project Overview
+
+This is a **Multi-Tenant SaaS Platform** for educational centers built with NestJS, PostgreSQL, and Prisma ORM. The platform includes authentication, RBAC, Telegram bot integration, payment management, and subscription handling.
+
+## Tech Stack
+
+- **Backend**: NestJS (TypeScript)
+- **Database**: PostgreSQL
+- **ORM**: Prisma
+- **Authentication**: JWT (passport-jwt)
+- **Validation**: class-validator, class-transformer
+- **Package Manager**: Yarn
+
+## Architecture Principles
+
+### 1. Multi-Tenant Architecture
+
+- Every entity belongs to a `Center` (tenant)
+- `centerId` is required in most models
+- Users can belong to only one center
+- Centers are isolated from each other
+
+### 2. Modular Structure
+
+- Each feature is a separate NestJS module
+- Module structure: `module.ts`, `service.ts`, `controller.ts`, `dto/`
+- Services contain business logic
+- Controllers handle HTTP requests
+- DTOs for validation
+
+### 3. RBAC (Role-Based Access Control)
+
+- **User** → has **UserRoles** → each role has **RolePermissions**
+- Permissions format: `module.action` (e.g., `user.create`, `center.read`)
+- Guards: `JwtAuthGuard` (authentication), `PermissionsGuard` (authorization)
+- Decorators: `@Public()`, `@RequirePermissions()`, `@CurrentUser()`
+
+### 4. Soft Delete Pattern
+
+- All main tables have `isDeleted` (boolean) and `deletedAt` (DateTime?)
+- Never hard delete by default - use soft delete
+- Queries MUST filter by `isDeleted: false` unless explicitly fetching deleted records
+- Index on `isDeleted` for performance
+
+### 5. Hybrid User Model
+
+- **User**: Main entity (Admin, Teacher, Student)
+- **TelegramUser**: Telegram-specific data
+- Link: `User.telegramUserId` → `TelegramUser.id`
+- Students can be created via Telegram (no email/password) or Web (email/password)
+- `userType`: ADMIN | TEACHER | STUDENT | PARENT
+- `authProvider`: local | telegram | google
+
+## Code Style Guidelines
+
+### TypeScript
+
+```typescript
+// ✅ Use explicit types
+async findOne(id: string): Promise<User> {
+  // ...
+}
+
+// ✅ Use interfaces for complex objects
+interface CreateUserData {
+  email?: string;
+  password?: string;
+  centerId: string;
+}
+
+// ✅ Use enums for constants
+enum UserType {
+  ADMIN = 'ADMIN',
+  TEACHER = 'TEACHER',
+  STUDENT = 'STUDENT',
+}
+```
+
+### Service Methods Pattern
+
+```typescript
+// ✅ CRUD methods
+async create(dto: CreateDto) { }
+async findAll(filters?: any) { }
+async findOne(id: string) { }
+async update(id: string, dto: UpdateDto) { }
+async softDelete(id: string) { }  // Soft delete
+async remove(id: string) { }      // Hard delete (admin only)
+async restore(id: string) { }     // Restore soft-deleted
+
+// ✅ Always validate existence
+const entity = await this.prisma.model.findUnique({ where: { id } });
+if (!entity) {
+  throw new NotFoundException('Entity not found');
+}
+
+// ✅ Check soft delete
+if (entity.isDeleted) {
+  throw new NotFoundException('Entity not found');
+}
+
+// ✅ Filter deleted in queries
+return this.prisma.model.findMany({
+  where: {
+    isDeleted: false,  // ALWAYS include this
+    ...otherFilters,
+  },
+});
+```
+
+### DTOs Pattern
+
+```typescript
+// ✅ Use class-validator decorators
+export class CreateUserDto {
+  @IsEmail()
+  @IsOptional() // Optional for Telegram users
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  @MinLength(6)
+  password?: string;
+
+  @IsUUID()
+  @IsNotEmpty()
+  centerId: string;
+
+  @IsEnum(UserType)
+  @IsOptional()
+  userType?: UserType;
+}
+
+// ✅ Use PartialType for update DTOs
+export class UpdateUserDto extends PartialType(CreateUserDto) {}
+```
+
+### Controller Pattern
+
+```typescript
+@Controller('users')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class UserController {
+  // ✅ CRUD endpoints
+  @Post()
+  @RequirePermissions('user.create')
+  create(@Body() dto: CreateUserDto) {}
+
+  @Get()
+  @RequirePermissions('user.read')
+  findAll(@Query('centerId') centerId?: string) {}
+
+  @Get(':id')
+  @RequirePermissions('user.read')
+  findOne(@Param('id') id: string) {}
+
+  @Patch(':id')
+  @RequirePermissions('user.update')
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {}
+
+  // ✅ Soft delete endpoint
+  @Delete(':id/soft')
+  @RequirePermissions('user.delete')
+  @HttpCode(HttpStatus.OK)
+  softDelete(@Param('id') id: string) {}
+
+  // ✅ Restore endpoint
+  @Post(':id/restore')
+  @RequirePermissions('user.manage')
+  @HttpCode(HttpStatus.OK)
+  restore(@Param('id') id: string) {}
+
+  // ✅ Hard delete (admin only)
+  @Delete(':id')
+  @RequirePermissions('user.manage')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@Param('id') id: string) {}
+}
+```
+
+## Database Schema Rules
+
+### Prisma Schema Pattern
+
+```prisma
+model Example {
+  id        String    @id @default(uuid())
+  name      String
+  centerId  String    // Required for most models
+
+  // Status
+  isActive  Boolean   @default(true)
+
+  // Soft delete (REQUIRED for all main tables)
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  // Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  center    Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([centerId])
+  @@index([isDeleted])  // Performance optimization
+  @@map("examples")
+}
+```
+
+### Required Fields for Tables
+
+- `id`: UUID primary key
+- `createdAt`, `updatedAt`: Timestamps
+- `isDeleted`, `deletedAt`: Soft delete (except junction tables)
+- `centerId`: For tenant isolation (most models)
+- `@@index([isDeleted])`: Index for performance
+
+### Junction Tables
+
+- No soft delete (use hard delete)
+- Examples: `UserRole`, `RolePermission`, `RefreshToken`
+
+## Module-Specific Rules
+
+### Auth Module
+
+- JWT tokens with refresh token flow
+- Email/password optional (Telegram users)
+- Check password existence before validation:
+
+```typescript
+if (!user.password) {
+  throw new UnauthorizedException(
+    'This account was created via Telegram. Please use Telegram to login.',
+  );
+}
+```
+
+### Telegram Module
+
+- Webhook URL: `/telegram/webhook/bot/:botId/:secretToken`
+- Auto-create User when TelegramUser is created (for students)
+- Verify `X-Telegram-Bot-Api-Secret-Token` header
+- `TelegramUser.telegramId` is globally unique
+- Always include `user` relation when querying TelegramUser
+
+### Payment Card Module
+
+- `isVisible`: Soft delete flag (user-facing)
+- `isPrimary`: Only one card can be primary per center
+- When setting primary, unset others:
+
+```typescript
+await prisma.centerPaymentCard.updateMany({
+  where: { centerId, isPrimary: true, id: { not: cardId } },
+  data: { isPrimary: false },
+});
+```
+
+### Center Module
+
+- Slug must be unique
+- Owner relationship: `Center.ownerUserId` → `User.id`
+- When soft deleting center, cascade to users, bots, cards
+
+## Security Rules
+
+### Authentication
+
+- All endpoints require JWT auth by default
+- Use `@Public()` decorator for public endpoints
+- Webhook endpoints are public but verify secret tokens
+
+### Authorization
+
+- Use `@RequirePermissions()` for fine-grained access control
+- Permission format: `module.action`
+- Admin permissions: `*.manage` (full access)
+
+### Sensitive Data
+
+- Never return password in responses
+- Mask sensitive fields (botToken, cardNumber in logs)
+- Use bcrypt for password hashing (salt rounds: 10)
+
+## Error Handling
+
+### Standard Exceptions
+
+```typescript
+// 404 Not Found
+throw new NotFoundException('User not found');
+
+// 409 Conflict
+throw new ConflictException('User already exists');
+
+// 400 Bad Request
+throw new BadRequestException('Invalid data');
+
+// 401 Unauthorized
+throw new UnauthorizedException('Invalid credentials');
+
+// 403 Forbidden
+throw new ForbiddenException('Insufficient permissions');
+```
+
+### Validation
+
+- Use DTOs with class-validator
+- Let NestJS handle validation errors automatically
+- Add custom error messages in decorators:
+
+```typescript
+@MinLength(6, { message: 'Password must be at least 6 characters' })
+```
+
+## API Response Format
+
+### Success Response
+
+```typescript
+// Single entity
+return {
+  id: 'uuid',
+  name: 'John',
+  // ... other fields
+};
+
+// List
+return {
+  data: [...],
+  total: 100,
+  page: 1,
+  limit: 20,
+};
+```
+
+### Error Response (automatic)
+
+```json
+{
+  "statusCode": 404,
+  "message": "User not found",
+  "error": "Not Found"
+}
+```
+
+## Testing Guidelines
+
+### Unit Tests
+
+- Test service methods with mocked Prisma
+- Test DTOs validation
+- Test guards and decorators
+
+### E2E Tests
+
+- Test full request/response cycle
+- Test authentication and authorization
+- Test CRUD operations
+
+## Environment Variables
+
+### Required
+
+```env
+DATABASE_URL="postgresql://user:password@localhost:5432/db"
+JWT_SECRET="secret-key"
+JWT_EXPIRES_IN="15m"
+JWT_REFRESH_SECRET="refresh-secret"
+JWT_REFRESH_EXPIRES_IN="7d"
+APP_URL="http://localhost:3000"
+TELEGRAM_WEBHOOK_SECRET="webhook-secret"
+```
+
+## Common Commands
+
+```bash
+# Development
+yarn start:dev
+
+# Build
+yarn build
+
+# Prisma
+npx prisma generate              # Generate client
+npx prisma migrate dev           # Create migration
+npx prisma migrate deploy        # Deploy to production
+npx prisma studio                # Open Prisma Studio
+npx prisma db seed              # Seed database
+
+# Testing
+yarn test                        # Unit tests
+yarn test:e2e                   # E2E tests
+yarn test:cov                   # Coverage
+```
+
+## File Naming Conventions
+
+```
+src/modules/user/
+├── dto/
+│   ├── create-user.dto.ts      # kebab-case for files
+│   ├── update-user.dto.ts
+│   └── index.ts                # Export all DTOs
+├── user.controller.ts          # Singular module name
+├── user.service.ts
+└── user.module.ts
+
+src/common/
+├── decorators/
+│   ├── current-user.decorator.ts
+│   └── permissions.decorator.ts
+├── guards/
+│   ├── jwt-auth.guard.ts
+│   └── permissions.guard.ts
+└── prisma/
+    ├── prisma.service.ts
+    └── prisma.module.ts
+```
+
+## Import Order
+
+```typescript
+// 1. External packages
+import { Injectable, NotFoundException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
+
+// 2. Internal modules (absolute paths)
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { CreateUserDto } from './dto';
+
+// 3. Types/Interfaces
+import { User } from '@prisma/client';
+```
+
+## Documentation
+
+### Code Comments
+
+- Use JSDoc for public methods
+- Explain WHY, not WHAT
+- Add TODO/FIXME for future work
+
+```typescript
+/**
+ * Create a new user with optional Telegram link
+ * Email and password are optional for Telegram-only users
+ */
+async create(dto: CreateUserDto): Promise<User> {
+  // TODO: Add email verification flow
+  // FIXME: Handle duplicate username edge case
+}
+```
+
+### README Files
+
+- Each complex feature has a guide (e.g., TELEGRAM_WEBHOOK_GUIDE.md)
+- Keep main README.md up to date
+- Include examples and use cases
+
+## Git Commit Messages
+
+```bash
+# Format: type(scope): subject
+
+feat(auth): add refresh token rotation
+fix(telegram): handle null chat_id
+docs(readme): update installation steps
+refactor(user): extract validation logic
+test(center): add soft delete tests
+chore(deps): update nest to 10.x
+```
+
+## Performance Optimization
+
+### Database
+
+- Always add indexes for foreign keys
+- Add indexes for frequently queried fields
+- Use `select` to fetch only needed fields
+- Use `include` sparingly (avoid N+1 queries)
+
+```typescript
+// ✅ Good - select specific fields
+return prisma.user.findMany({
+  select: {
+    id: true,
+    email: true,
+    firstName: true,
+  },
+});
+
+// ❌ Bad - fetch everything
+return prisma.user.findMany();
+```
+
+### Caching (Future)
+
+- Cache frequently accessed data (permissions, plans)
+- Use Redis for session storage
+- Invalidate cache on updates
+
+## AI Assistant Guidelines
+
+When helping with this project:
+
+1. **Always** include soft delete logic (`isDeleted: false`)
+2. **Always** validate entity existence before operations
+3. **Always** use proper exception types
+4. **Always** include indexes in Prisma schema
+5. **Never** hard delete without explicit permission
+6. **Never** return sensitive data (passwords, tokens)
+7. **Follow** the established patterns (see above)
+8. **Reference** existing code for consistency
+9. **Update** relevant documentation when adding features
+10. **Test** changes before committing
+
+## Project-Specific Notes
+
+### Telegram Bot Flow
+
+1. User sends /start to bot
+2. Webhook receives update
+3. TelegramUser created/updated
+4. User auto-created (if student)
+5. Link: TelegramUser ↔ User
+6. Send welcome message
+
+### Payment Card Display
+
+1. Query: `isVisible: true`, `isActive: true`
+2. Order: `isPrimary: 'desc'`, `displayOrder: 'asc'`
+3. Show primary with ⭐ emoji
+4. Allow multiple cards per center
+
+### User Type Logic
+
+- **ADMIN**: Full system access, can manage centers
+- **TEACHER**: Can manage courses, students within center
+- **STUDENT**: Can enroll, pay, access course materials
+- **PARENT**: (Future) View child progress, make payments
+
+## Quick Reference
+
+### Most Used Patterns
+
+**Service CRUD:**
+
+```typescript
+create(dto) → findAll(filters?) → findOne(id) → update(id, dto) → softDelete(id) → restore(id) → remove(id)
+```
+
+**Controller Endpoints:**
+
+```typescript
+POST /   → GET /   → GET /:id   → PATCH /:id   → DELETE /:id/soft   → POST /:id/restore   → DELETE /:id
+```
+
+**Query with Filters:**
+
+```typescript
+const where: any = { isDeleted: false };
+if (centerId) where.centerId = centerId;
+if (isActive !== undefined) where.isActive = isActive;
+```
+
+**Soft Delete:**
+
+```typescript
+return prisma.model.update({
+  where: { id },
+  data: { isDeleted: true, deletedAt: new Date() },
+});
+```
+
+---
+
+**Version:** 1.0  
+**Last Updated:** 2024-11-17  
+**Maintainer:** AI-Generated Project Structure
