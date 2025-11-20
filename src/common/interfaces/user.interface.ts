@@ -5,7 +5,6 @@ export interface IUser {
   lastName?: string;
   phoneNumber: string;
   isActive: boolean;
-  emailVerified: boolean;
   centerId: number;
   createdAt: Date;
   updatedAt: Date;
