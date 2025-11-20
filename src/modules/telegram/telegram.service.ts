@@ -230,7 +230,7 @@ export class TelegramService {
       // Auto-create linked User for students
       // Generate a default phone number from telegram ID if not available
       const defaultPhoneNumber = `998${telegramId.slice(-9).padStart(9, '0')}`;
-      
+
       const linkedUser = await this.prisma.user.create({
         data: {
           firstName: message.from.first_name,
@@ -274,8 +274,10 @@ export class TelegramService {
       // Create linked User if doesn't exist
       if (!telegramUser.user && bot.centerId) {
         // Generate a default phone number from telegram ID if not available
-        const defaultPhoneNumber = telegramUser.phoneNumber || `998${telegramId.slice(-9).padStart(9, '0')}`;
-        
+        const defaultPhoneNumber =
+          telegramUser.phoneNumber ||
+          `998${telegramId.slice(-9).padStart(9, '0')}`;
+
         const linkedUser = await this.prisma.user.create({
           data: {
             firstName: telegramUser.firstName,
@@ -324,7 +326,7 @@ export class TelegramService {
     await this.telegramApi.answerCallbackQuery(
       bot.botToken,
       callbackQuery.id,
-      'Ma\'lumot qabul qilindi',
+      "Ma'lumot qabul qilindi",
     );
 
     // Parse callback data
@@ -367,7 +369,7 @@ export class TelegramService {
           await this.sendMessageToUser(
             bot,
             telegramUser.chatId,
-            'Noma\'lum buyruq. /help ni bosing.',
+            "Noma'lum buyruq. /help ni bosing.",
           );
       }
     } else {
@@ -417,7 +419,8 @@ export class TelegramService {
     // const enrollment = await this.findCourseByToken(courseToken);
 
     // Mock course info
-    const courseInfo = `📚 <b>Python Asoslari kursi</b>\n\n` +
+    const courseInfo =
+      `📚 <b>Python Asoslari kursi</b>\n\n` +
       `👨‍🏫 <b>O'qituvchi:</b> Alisher Karimov\n` +
       `📅 <b>Boshlanish:</b> 2024-02-01\n` +
       `⏰ <b>Davomiyligi:</b> 3 oy\n` +
@@ -435,11 +438,11 @@ export class TelegramService {
       },
       orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
     });
-    
+
     let paymentInfo = '';
     if (paymentCards && paymentCards.length > 0) {
       paymentInfo = `💳 <b>To'lov uchun kartalar:</b>\n\n`;
-      
+
       for (const card of paymentCards) {
         paymentInfo += `${card.isPrimary ? '⭐ ' : ''}Karta: <code>${card.cardNumber}</code>\n`;
         paymentInfo += `${card.cardHolder}\n`;
@@ -451,10 +454,10 @@ export class TelegramService {
         }
         paymentInfo += `\n`;
       }
-      
-      paymentInfo += `${bot.paymentInstruction || 'To\'lov qilganingizdan keyin chek rasmini yuboring.'}`;
+
+      paymentInfo += `${bot.paymentInstruction || "To'lov qilganingizdan keyin chek rasmini yuboring."}`;
     } else {
-      paymentInfo = 'To\'lov ma\'lumotlari hali sozlanmagan.';
+      paymentInfo = "To'lov ma'lumotlari hali sozlanmagan.";
     }
 
     const keyboard = this.telegramApi.buildInlineKeyboard([
@@ -528,9 +531,7 @@ export class TelegramService {
   ) {
     // Check if user is in some state (e.g., waiting for input)
     // For now, just echo back
-    this.logger.log(
-      `Regular message from ${telegramUser.telegramId}: ${text}`,
-    );
+    this.logger.log(`Regular message from ${telegramUser.telegramId}: ${text}`);
   }
 
   /**
@@ -563,7 +564,7 @@ export class TelegramService {
         bot,
         telegramUser.chatId,
         '✅ Chek qabul qilindi!\n\n' +
-          'To\'lovingiz tekshirilmoqda. Tasdiqlangandan keyin sizga xabar beramiz.',
+          "To'lovingiz tekshirilmoqda. Tasdiqlangandan keyin sizga xabar beramiz.",
       );
 
       // TODO: Notify admins about new payment receipt
@@ -583,8 +584,8 @@ export class TelegramService {
     await this.sendMessageToUser(
       bot,
       chatId,
-      '📸 Iltimos, to\'lov chekining rasmini yuboring.\n\n' +
-        'Rasmda summа va sana aniq ko\'rinishi kerak.',
+      "📸 Iltimos, to'lov chekining rasmini yuboring.\n\n" +
+        "Rasmda summа va sana aniq ko'rinishi kerak.",
     );
 
     // TODO: Set user state to "WAITING_FOR_RECEIPT"
@@ -603,7 +604,8 @@ export class TelegramService {
     await this.sendMessageToUser(
       bot,
       chatId,
-      '❌ Kursga yozilish bekor qilindi.\n\n' + 'Yana ro\'yxatdan o\'tish uchun havolani bosing.',
+      '❌ Kursga yozilish bekor qilindi.\n\n' +
+        "Yana ro'yxatdan o'tish uchun havolani bosing.",
     );
 
     // TODO: Delete enrollment record if exists
@@ -620,5 +622,4 @@ export class TelegramService {
   ) {
     return this.telegramApi.sendMessage(bot.botToken, chatId, text, options);
   }
-
 }

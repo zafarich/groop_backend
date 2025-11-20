@@ -1,10 +1,9 @@
 export interface IUser {
   id: string;
-  email: string;
   username?: string;
   firstName?: string;
   lastName?: string;
-  phoneNumber?: string;
+  phoneNumber: string;
   isActive: boolean;
   emailVerified: boolean;
   centerId: number;
@@ -65,7 +64,7 @@ export interface IRolePermission {
 
 export interface IJwtPayload {
   sub: string;
-  email: string;
+  phoneNumber: string;
   centerId: number;
   iat?: number;
   exp?: number;
