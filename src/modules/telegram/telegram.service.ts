@@ -12,6 +12,51 @@ import {
   UpdateTelegramUserDto,
   TelegramWebhookUpdateDto,
 } from './dto';
+import { CenterTelegramBot, Center, TelegramUser, User } from '@prisma/client';
+
+// Telegram Bot API interfaces
+interface TelegramBotWithCenter extends CenterTelegramBot {
+  center: Center;
+}
+
+interface TelegramUserWithUser extends TelegramUser {
+  user: User | null;
+}
+
+interface TelegramMessageFrom {
+  id: number;
+  is_bot?: boolean;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  language_code?: string;
+}
+
+interface TelegramMessage {
+  message_id: number;
+  from: TelegramMessageFrom;
+  chat: {
+    id: number;
+    type: string;
+  };
+  date: number;
+  text?: string;
+  photo?: Array<{
+    file_id: string;
+    file_unique_id: string;
+    file_size?: number;
+    width: number;
+    height: number;
+  }>;
+  caption?: string;
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramMessageFrom;
+  message: TelegramMessage;
+  data: string;
+}
 
 @Injectable()
 export class TelegramService {
@@ -143,7 +188,7 @@ export class TelegramService {
     botId: string,
     secretToken: string,
     update: TelegramWebhookUpdateDto,
-    headers: any,
+    headers: Record<string, string | string[] | undefined>,
   ) {
     this.logger.log(
       `Received webhook update ${update.update_id} for bot ${botId}`,
@@ -168,9 +213,11 @@ export class TelegramService {
 
     // Verify Telegram secret (if set in env)
     const telegramSecret = headers['x-telegram-bot-api-secret-token'];
+    const telegramSecretStr = Array.isArray(telegramSecret) ? telegramSecret[0] : telegramSecret;
+    
     if (
       process.env.TELEGRAM_WEBHOOK_SECRET &&
-      telegramSecret !== process.env.TELEGRAM_WEBHOOK_SECRET
+      telegramSecretStr !== process.env.TELEGRAM_WEBHOOK_SECRET
     ) {
       this.logger.warn(`Invalid Telegram secret for bot ${botId}`);
       throw new UnauthorizedException('Invalid Telegram secret');
@@ -179,24 +226,25 @@ export class TelegramService {
     try {
       // Handle different types of updates
       if (update.message) {
-        await this.handleMessage(bot, update.message);
+        await this.handleMessage(bot, update.message as unknown as TelegramMessage);
       }
 
       if (update.callback_query) {
-        await this.handleCallbackQuery(bot, update.callback_query);
+        await this.handleCallbackQuery(bot, update.callback_query as unknown as TelegramCallbackQuery);
       }
 
       return { ok: true };
-    } catch (error) {
-      this.logger.error(`Error handling webhook: ${error.message}`);
-      return { ok: false, error: error.message };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Error handling webhook: ${errorMessage}`);
+      return { ok: false, error: errorMessage };
     }
   }
 
   /**
    * Handle incoming messages
    */
-  private async handleMessage(bot: any, message: any) {
+  private async handleMessage(bot: TelegramBotWithCenter, message: TelegramMessage) {
     this.logger.log(
       `Handling message from ${message.from.id} for center ${bot.center.name}`,
     );
@@ -205,7 +253,7 @@ export class TelegramService {
     const chatId = message.chat.id.toString();
 
     // Upsert telegram user (globally unique by telegramId)
-    let telegramUser = await this.prisma.telegramUser.findUnique({
+    let telegramUser: TelegramUserWithUser | null = await this.prisma.telegramUser.findUnique({
       where: { telegramId },
       include: { user: true },
     });
@@ -216,10 +264,10 @@ export class TelegramService {
         data: {
           telegramId,
           centerId: bot.centerId,
-          username: message.from.username,
-          firstName: message.from.first_name,
-          lastName: message.from.last_name,
-          languageCode: message.from.language_code,
+          username: message.from.username || null,
+          firstName: message.from.first_name || null,
+          lastName: message.from.last_name || null,
+          languageCode: message.from.language_code || null,
           chatId,
           isBot: message.from.is_bot || false,
           status: 'active',
@@ -233,9 +281,9 @@ export class TelegramService {
 
       const linkedUser = await this.prisma.user.create({
         data: {
-          firstName: message.from.first_name,
-          lastName: message.from.last_name,
-          username: message.from.username,
+          firstName: message.from.first_name || null,
+          lastName: message.from.last_name || null,
+          username: message.from.username || null,
           phoneNumber: defaultPhoneNumber,
           centerId: bot.centerId,
           userType: 'STUDENT',
@@ -252,10 +300,10 @@ export class TelegramService {
       telegramUser = await this.prisma.telegramUser.findUnique({
         where: { id: telegramUser.id },
         include: { user: true },
-      });
+      }) as TelegramUserWithUser;
     } else {
       // Update chat_id and centerId if changed
-      const updateData: any = {};
+      const updateData: { chatId?: string; centerId?: number } = {};
       if (telegramUser.chatId !== chatId) {
         updateData.chatId = chatId;
       }
@@ -268,21 +316,21 @@ export class TelegramService {
           where: { id: telegramUser.id },
           data: updateData,
           include: { user: true },
-        });
+        }) as TelegramUserWithUser;
       }
 
       // Create linked User if doesn't exist
-      if (!telegramUser.user && bot.centerId) {
+      if (telegramUser && !telegramUser.user && bot.centerId) {
         // Generate a default phone number from telegram ID if not available
         const defaultPhoneNumber =
           telegramUser.phoneNumber ||
           `998${telegramId.slice(-9).padStart(9, '0')}`;
 
-        const linkedUser = await this.prisma.user.create({
+        await this.prisma.user.create({
           data: {
-            firstName: telegramUser.firstName,
-            lastName: telegramUser.lastName,
-            username: telegramUser.username,
+            firstName: telegramUser.firstName || null,
+            lastName: telegramUser.lastName || null,
+            username: telegramUser.username || null,
             phoneNumber: defaultPhoneNumber,
             centerId: bot.centerId,
             userType: 'STUDENT',
@@ -292,14 +340,20 @@ export class TelegramService {
         });
 
         this.logger.log(
-          `Created linked User ${linkedUser.id} for existing TelegramUser ${telegramUser.id}`,
+          `Created linked User for existing TelegramUser ${telegramUser.id}`,
         );
 
         telegramUser = await this.prisma.telegramUser.findUnique({
           where: { id: telegramUser.id },
           include: { user: true },
-        });
+        }) as TelegramUserWithUser;
       }
+    }
+
+    // Ensure telegramUser is not null
+    if (!telegramUser) {
+      this.logger.error('TelegramUser is null after processing');
+      return;
     }
 
     // Process message text
@@ -316,7 +370,7 @@ export class TelegramService {
   /**
    * Handle callback queries (inline button clicks)
    */
-  private async handleCallbackQuery(bot: any, callbackQuery: any) {
+  private async handleCallbackQuery(bot: TelegramBotWithCenter, callbackQuery: TelegramCallbackQuery) {
     this.logger.log(`Handling callback query: ${callbackQuery.data}`);
 
     const data = callbackQuery.data;
@@ -348,7 +402,7 @@ export class TelegramService {
   /**
    * Process text messages
    */
-  private async processTextMessage(bot: any, telegramUser: any, text: string) {
+  private async processTextMessage(bot: TelegramBotWithCenter, telegramUser: TelegramUserWithUser, text: string) {
     this.logger.log(`Processing text message: ${text}`);
 
     // Handle commands
@@ -368,7 +422,7 @@ export class TelegramService {
         default:
           await this.sendMessageToUser(
             bot,
-            telegramUser.chatId,
+            telegramUser.chatId || '',
             "Noma'lum buyruq. /help ni bosing.",
           );
       }
@@ -382,8 +436,8 @@ export class TelegramService {
    * Handle /start command
    */
   private async handleStartCommand(
-    bot: any,
-    telegramUser: any,
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
     param?: string,
   ) {
     // Parse start parameter (e.g., /start course_ABC123)
@@ -399,7 +453,7 @@ export class TelegramService {
       `Assalomu alaykum! ${bot.center.name} o'quv markazi botiga xush kelibsiz! 👋\n\n` +
         `Kurslarimiz haqida ma'lumot olish uchun /menu buyrug'ini yuboring.`;
 
-    await this.sendMessageToUser(bot, telegramUser.chatId, welcomeMessage);
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', welcomeMessage);
   }
 
   /**
@@ -407,8 +461,8 @@ export class TelegramService {
    * TODO: Implement with actual Course model later
    */
   private async handleCourseEnrollment(
-    bot: any,
-    telegramUser: any,
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
     courseToken: string,
   ) {
     this.logger.log(
@@ -477,7 +531,7 @@ export class TelegramService {
 
     await this.sendMessageToUser(
       bot,
-      telegramUser.chatId,
+      telegramUser.chatId || '',
       courseInfo + paymentInfo,
       {
         parse_mode: 'HTML',
@@ -492,7 +546,7 @@ export class TelegramService {
   /**
    * Handle /help command
    */
-  private async handleHelpCommand(bot: any, telegramUser: any) {
+  private async handleHelpCommand(bot: TelegramBotWithCenter, telegramUser: TelegramUserWithUser) {
     const helpText =
       `<b>Yordam:</b>\n\n` +
       `/start - Botni ishga tushirish\n` +
@@ -500,7 +554,7 @@ export class TelegramService {
       `/help - Yordam\n\n` +
       `Savollar bo'lsa, bizga murojaat qiling: ${bot.center.name}`;
 
-    await this.sendMessageToUser(bot, telegramUser.chatId, helpText, {
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', helpText, {
       parse_mode: 'HTML',
     });
   }
@@ -508,7 +562,7 @@ export class TelegramService {
   /**
    * Handle /menu command
    */
-  private async handleMenuCommand(bot: any, telegramUser: any) {
+  private async handleMenuCommand(bot: TelegramBotWithCenter, telegramUser: TelegramUserWithUser) {
     // TODO: Get actual courses from database
     const menuText =
       `<b>${bot.center.name}</b>\n\n` +
@@ -516,7 +570,7 @@ export class TelegramService {
       `📚 Hozircha kurslar mavjud emas.\n\n` +
       `Tez orada yangi kurslar qo'shiladi!`;
 
-    await this.sendMessageToUser(bot, telegramUser.chatId, menuText, {
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', menuText, {
       parse_mode: 'HTML',
     });
   }
@@ -524,9 +578,9 @@ export class TelegramService {
   /**
    * Handle regular text messages
    */
-  private async handleRegularMessage(
-    bot: any,
-    telegramUser: any,
+  private handleRegularMessage(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
     text: string,
   ) {
     // Check if user is in some state (e.g., waiting for input)
@@ -537,19 +591,22 @@ export class TelegramService {
   /**
    * Handle photo messages (payment receipt)
    */
-  private async handlePhotoMessage(bot: any, telegramUser: any, message: any) {
+  private async handlePhotoMessage(bot: TelegramBotWithCenter, telegramUser: TelegramUserWithUser, message: TelegramMessage) {
     this.logger.log(
       `Received photo from ${telegramUser.telegramId} for center ${bot.center.name}`,
     );
 
+    if (!message.photo || message.photo.length === 0) {
+      return;
+    }
+
     const photo = message.photo[message.photo.length - 1]; // Get largest photo
     const fileId = photo.file_id;
-    const caption = message.caption || '';
 
     // Get file info
     const fileInfo = await this.telegramApi.getFile(bot.botToken, fileId);
 
-    if (fileInfo.ok) {
+    if (fileInfo.ok && fileInfo.result?.file_path) {
       const fileUrl = this.telegramApi.getFileUrl(
         bot.botToken,
         fileInfo.result.file_path,
@@ -558,11 +615,11 @@ export class TelegramService {
       this.logger.log(`Payment receipt file URL: ${fileUrl}`);
 
       // TODO: Save receipt to database and notify admin
-      // await this.savePaymentReceipt(telegramUser.id, fileUrl, caption);
+      // await this.savePaymentReceipt(telegramUser.id, fileUrl, message.caption);
 
       await this.sendMessageToUser(
         bot,
-        telegramUser.chatId,
+        telegramUser.chatId || '',
         '✅ Chek qabul qilindi!\n\n' +
           "To'lovingiz tekshirilmoqda. Tasdiqlangandan keyin sizga xabar beramiz.",
       );
@@ -575,11 +632,11 @@ export class TelegramService {
    * Handle "Send Receipt" button
    */
   private async handleSendReceiptButton(
-    bot: any,
+    bot: TelegramBotWithCenter,
     chatId: number,
-    params: string[],
+    _params: string[],
   ) {
-    const courseToken = params[0];
+    // const courseToken = params[0]; // TODO: Will be used later
 
     await this.sendMessageToUser(
       bot,
@@ -595,11 +652,11 @@ export class TelegramService {
    * Handle "Cancel Enrollment" button
    */
   private async handleCancelEnrollment(
-    bot: any,
+    bot: TelegramBotWithCenter,
     chatId: number,
-    params: string[],
+    _params: string[],
   ) {
-    const courseToken = params[0];
+    // const courseToken = params[0]; // TODO: Will be used later
 
     await this.sendMessageToUser(
       bot,
@@ -615,10 +672,13 @@ export class TelegramService {
    * Send message to user through bot
    */
   private async sendMessageToUser(
-    bot: any,
+    bot: TelegramBotWithCenter,
     chatId: string | number,
     text: string,
-    options?: any,
+    options?: {
+      parse_mode?: 'HTML' | 'Markdown';
+      reply_markup?: unknown;
+    },
   ) {
     return this.telegramApi.sendMessage(bot.botToken, chatId, text, options);
   }

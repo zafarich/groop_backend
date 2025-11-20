@@ -23,7 +23,7 @@ export class TelegramApiService {
    */
   private isValidSecretToken(token: string): boolean {
     return (
-      token &&
+      !!token &&
       token.length >= 1 &&
       token.length <= 256 &&
       /^[A-Za-z0-9_-]+$/.test(token)
@@ -293,10 +293,7 @@ export class TelegramApiService {
   /**
    * Get file
    */
-  async getFile(
-    botToken: string,
-    fileId: string,
-  ): Promise<TelegramResponse> {
+  async getFile(botToken: string, fileId: string): Promise<TelegramResponse> {
     const url = `https://api.telegram.org/bot${botToken}/getFile`;
 
     try {
@@ -323,10 +320,13 @@ export class TelegramApiService {
   /**
    * Build inline keyboard
    */
-  buildInlineKeyboard(buttons: Array<Array<{ text: string; callback_data?: string; url?: string }>>) {
+  buildInlineKeyboard(
+    buttons: Array<
+      Array<{ text: string; callback_data?: string; url?: string }>
+    >,
+  ) {
     return {
       inline_keyboard: buttons,
     };
   }
 }
-
