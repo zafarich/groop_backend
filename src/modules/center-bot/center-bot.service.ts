@@ -296,8 +296,22 @@ export class CenterBotService {
     };
   }
 
+  /**
+   * Generate a secure secret token for Telegram webhook
+   * Telegram requires: 1-256 characters, only A-Z, a-z, 0-9, _, -
+   */
   private generateSecretToken(): string {
-    return crypto.randomBytes(32).toString('hex');
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+    const length = 64; // Good length for security (256 bits of entropy)
+    const randomBytes = crypto.randomBytes(length);
+
+    let token = '';
+    for (let i = 0; i < length; i++) {
+      token += chars[randomBytes[i] % chars.length];
+    }
+
+    return token;
   }
 
   private buildWebhookUrl(botId: number, secretToken: string): string {

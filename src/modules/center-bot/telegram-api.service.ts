@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 interface TelegramResponse {
   ok: boolean;
@@ -18,6 +18,19 @@ export class TelegramApiService {
   private readonly logger = new Logger(TelegramApiService.name);
 
   /**
+   * Validate secret token format for Telegram
+   * Must be 1-256 characters, only A-Z, a-z, 0-9, _, -
+   */
+  private isValidSecretToken(token: string): boolean {
+    return (
+      token &&
+      token.length >= 1 &&
+      token.length <= 256 &&
+      /^[A-Za-z0-9_-]+$/.test(token)
+    );
+  }
+
+  /**
    * Set webhook for bot
    */
   async setWebhook(
@@ -27,16 +40,29 @@ export class TelegramApiService {
   ): Promise<TelegramResponse> {
     const url = `https://api.telegram.org/bot${botToken}/setWebhook`;
 
+    // Validate secret token format if provided
+    if (secretToken && !this.isValidSecretToken(secretToken)) {
+      const errorMsg = `Invalid secret token format. Must be 1-256 characters, only A-Z, a-z, 0-9, _, -. Got: "${secretToken}"`;
+      this.logger.error(errorMsg);
+      throw new BadRequestException(errorMsg);
+    }
+
     try {
+      const body: any = {
+        url: webhookUrl,
+        allowed_updates: ['message', 'callback_query', 'my_chat_member'],
+        drop_pending_updates: true,
+      };
+
+      // Only add secret_token if it's valid
+      if (secretToken && this.isValidSecretToken(secretToken)) {
+        body.secret_token = secretToken;
+      }
+
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: webhookUrl,
-          allowed_updates: ['message', 'callback_query', 'my_chat_member'],
-          drop_pending_updates: true,
-          secret_token: secretToken,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await response.json();
