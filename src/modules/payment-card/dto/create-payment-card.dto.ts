@@ -13,7 +13,7 @@ import {
 export class CreatePaymentCardDto {
   @IsUUID()
   @IsNotEmpty()
-  centerId: string;
+  centerId: number;
 
   @IsString()
   @IsNotEmpty()

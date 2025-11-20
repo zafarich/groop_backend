@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsNumber } from 'class-validator';
 
 export class UpdateCenterDto {
   @IsString()
@@ -17,9 +17,9 @@ export class UpdateCenterDto {
   @IsOptional()
   logoUrl?: string;
 
-  @IsUUID()
+  @IsNumber()
   @IsOptional()
-  ownerUserId?: string;
+  ownerUserId?: number;
 
   @IsBoolean()
   @IsOptional()

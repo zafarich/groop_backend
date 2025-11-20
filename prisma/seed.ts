@@ -388,21 +388,20 @@ async function main() {
   // Create admin user
   const hashedPassword = await bcrypt.hash('admin123', 10);
   const adminUser = await prisma.user.upsert({
-    where: { email: 'admin@example.com' },
+    where: { phoneNumber: '998901234567' },
     update: {},
     create: {
-      email: 'admin@example.com',
+      phoneNumber: '998901234567',
       username: 'admin',
       password: hashedPassword,
       firstName: 'Admin',
       lastName: 'User',
       isActive: true,
-      emailVerified: true,
       centerId: center.id,
     },
   });
 
-  console.log('✅ Created admin user:', adminUser.email);
+  console.log('✅ Created admin user:', adminUser.phoneNumber);
 
   // Assign admin role to admin user
   await prisma.userRole.upsert({
@@ -423,7 +422,7 @@ async function main() {
 
   console.log('\n🎉 Seeding completed successfully!');
   console.log('\n📝 Default credentials:');
-  console.log('   Email: admin@example.com');
+  console.log('   Phone: 998901234567');
   console.log('   Password: admin123');
 }
 

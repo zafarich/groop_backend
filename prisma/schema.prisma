@@ -12,13 +12,13 @@ datasource db {
 
 // Center (Tenant) - Multi-tenant architecture
 model Center {
-  id          String   @id @default(uuid())
+  id          Int      @id @default(autoincrement())
   name        String
   slug        String   @unique
   description String?
   logoUrl     String?
   isActive    Boolean  @default(true)
-  ownerUserId String?
+  ownerUserId Int
   
   // Soft delete
   isDeleted   Boolean  @default(false)
@@ -42,13 +42,12 @@ model Center {
 
 // User model - Asosiy user entity (Admin, Teacher, Student)
 model User {
-  id            String    @id @default(uuid())
-  email         String?   @unique  // Optional for Telegram-only users
+  id            Int       @id @default(autoincrement())
   username      String?   @unique
   password      String?              // Optional for Telegram-only users
   firstName     String?
   lastName      String?
-  phoneNumber   String?
+  phoneNumber   String    @unique    // Required for phone-based authentication
   
   // User type and authentication
   userType      UserType  @default(STUDENT)  // ADMIN, TEACHER, STUDENT
@@ -56,13 +55,12 @@ model User {
   
   // Status
   isActive      Boolean   @default(true)
-  emailVerified Boolean   @default(false)
   
   // Multi-tenant
-  centerId      String
+  centerId      Int
   
   // Telegram integration (optional link)
-  telegramUserId String?   @unique
+  telegramUserId Int?     @unique
   
   // Soft delete
   isDeleted     Boolean   @default(false)
@@ -79,7 +77,7 @@ model User {
   telegramUser   TelegramUser?   @relation(fields: [telegramUserId], references: [id])
 
   @@index([centerId])
-  @@index([email])
+  @@index([phoneNumber])
   @@index([telegramUserId])
   @@index([userType])
   @@index([isDeleted])
@@ -88,12 +86,12 @@ model User {
 
 // Role model
 model Role {
-  id          String   @id @default(uuid())
+  id          Int      @id @default(autoincrement())
   name        String
   slug        String
   description String?
   isSystem    Boolean  @default(false)
-  centerId    String
+  centerId    Int
   
   // Soft delete
   isDeleted   Boolean  @default(false)
@@ -115,7 +113,7 @@ model Role {
 
 // Permission model
 model Permission {
-  id          String   @id @default(uuid())
+  id          Int      @id @default(autoincrement())
   name        String
   slug        String   @unique
   description String?
@@ -139,9 +137,9 @@ model Permission {
 
 // UserRole junction table
 model UserRole {
-  id        String   @id @default(uuid())
-  userId    String
-  roleId    String
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  roleId    Int
   createdAt DateTime @default(now())
 
   // Relations
@@ -156,9 +154,9 @@ model UserRole {
 
 // RolePermission junction table
 model RolePermission {
-  id           String   @id @default(uuid())
-  roleId       String
-  permissionId String
+  id           Int      @id @default(autoincrement())
+  roleId       Int
+  permissionId Int
   createdAt    DateTime @default(now())
 
   // Relations
@@ -173,9 +171,9 @@ model RolePermission {
 
 // RefreshToken for JWT authentication
 model RefreshToken {
-  id        String   @id @default(uuid())
+  id        Int      @id @default(autoincrement())
   token     String   @unique
-  userId    String
+  userId    Int
   expiresAt DateTime
   createdAt DateTime @default(now())
 
@@ -189,9 +187,9 @@ model RefreshToken {
 
 // TelegramUser - Telegram-specific data
 model TelegramUser {
-  id           String   @id @default(uuid())
+  id           Int      @id @default(autoincrement())
   telegramId   String   @unique  // Telegram user ID (globally unique)
-  centerId     String?             // Optional: qaysi center'dan kelgan
+  centerId     Int?                // Optional: qaysi center'dan kelgan
   
   // Telegram-specific fields
   username     String?
@@ -227,8 +225,8 @@ model TelegramUser {
 
 // Center Telegram Bot - Har bir center uchun bot ma'lumotlari
 model CenterTelegramBot {
-  id          String   @id @default(uuid())
-  centerId    String
+  id          Int      @id @default(autoincrement())
+  centerId    Int
   botToken    String   @unique
   botUsername String?
   displayName String?
@@ -262,8 +260,8 @@ model CenterTelegramBot {
 
 // Center Payment Cards - O'quv markaz to'lov kartalari
 model CenterPaymentCard {
-  id         String   @id @default(uuid())
-  centerId   String
+  id         Int      @id @default(autoincrement())
+  centerId   Int
   
   // Karta ma'lumotlari
   cardNumber String   // Masalan: "8600 1234 5678 9012"
@@ -299,7 +297,7 @@ model CenterPaymentCard {
 
 // Tarif rejalar (Plans)
 model Plan {
-  id            String   @id @default(uuid())
+  id            Int      @id @default(autoincrement())
   key           String   @unique
   name          String
   description   String?
@@ -328,9 +326,9 @@ model Plan {
 
 // Center Subscription - Obuna ma'lumotlari
 model CenterSubscription {
-  id                     String             @id @default(uuid())
-  centerId               String
-  planId                 String
+  id                     Int                @id @default(autoincrement())
+  centerId               Int
+  planId                 Int
   status                 SubscriptionStatus @default(ACTIVE)
   currentPeriodStart     DateTime
   currentPeriodEnd       DateTime

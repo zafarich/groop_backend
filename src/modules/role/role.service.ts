@@ -51,7 +51,7 @@ export class RoleService {
     return role;
   }
 
-  async findAll(centerId?: string) {
+  async findAll(centerId?: number) {
     const where = centerId ? { centerId } : {};
 
     return this.prisma.role.findMany({
@@ -75,7 +75,7 @@ export class RoleService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const role = await this.prisma.role.findUnique({
       where: { id },
       include: {
@@ -90,7 +90,6 @@ export class RoleService {
             user: {
               select: {
                 id: true,
-                email: true,
                 firstName: true,
                 lastName: true,
               },
@@ -107,7 +106,7 @@ export class RoleService {
     return role;
   }
 
-  async update(id: string, updateRoleDto: UpdateRoleDto) {
+  async update(id: number, updateRoleDto: UpdateRoleDto) {
     const role = await this.prisma.role.findUnique({
       where: { id },
     });
@@ -146,7 +145,7 @@ export class RoleService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const role = await this.prisma.role.findUnique({
       where: { id },
     });
@@ -166,7 +165,7 @@ export class RoleService {
     return { message: 'Role deleted successfully' };
   }
 
-  async assignPermission(roleId: string, assignPermissionDto: AssignPermissionDto) {
+  async assignPermission(roleId: number, assignPermissionDto: AssignPermissionDto) {
     const { permissionId } = assignPermissionDto;
 
     // Check if role exists
@@ -212,7 +211,7 @@ export class RoleService {
     return this.findOne(roleId);
   }
 
-  async removePermission(roleId: string, permissionId: string) {
+  async removePermission(roleId: number, permissionId: number) {
     const rolePermission = await this.prisma.rolePermission.findUnique({
       where: {
         roleId_permissionId: {
@@ -235,7 +234,7 @@ export class RoleService {
     return { message: 'Permission removed from role successfully' };
   }
 
-  async getRolesByCenter(centerId: string) {
+  async getRolesByCenter(centerId: number) {
     return this.findAll(centerId);
   }
 }

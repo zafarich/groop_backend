@@ -1,7 +1,9 @@
-import { IsNotEmpty, IsUUID } from 'class-validator';
+import { IsNotEmpty, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class AssignRoleDto {
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  roleId: string;
+  @Type(() => Number)
+  roleId: number;
 }

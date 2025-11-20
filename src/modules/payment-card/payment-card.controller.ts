@@ -10,6 +10,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  ParseIntPipe
 } from '@nestjs/common';
 import { PaymentCardService } from './payment-card.service';
 import { CreatePaymentCardDto, UpdatePaymentCardDto } from './dto';
@@ -38,7 +39,7 @@ export class PaymentCardController {
   @Get()
   @RequirePermissions('center.read')
   findAll(
-    @Query('centerId') centerId?: string,
+    @Query('centerId', new ParseIntPipe({ optional: true })) centerId?: number,
     @Query('includeHidden') includeHidden?: string,
   ) {
     const showHidden = includeHidden === 'true';
@@ -50,7 +51,7 @@ export class PaymentCardController {
    */
   @Get('visible/:centerId')
   @Public()
-  findVisibleByCenter(@Param('centerId') centerId: string) {
+  findVisibleByCenter(@Param('centerId', ParseIntPipe) centerId: number) {
     return this.paymentCardService.findVisibleByCenter(centerId);
   }
 
@@ -59,7 +60,7 @@ export class PaymentCardController {
    */
   @Get('primary/:centerId')
   @Public()
-  findPrimaryByCenter(@Param('centerId') centerId: string) {
+  findPrimaryByCenter(@Param('centerId', ParseIntPipe) centerId: number) {
     return this.paymentCardService.findPrimaryByCenter(centerId);
   }
 
@@ -68,7 +69,7 @@ export class PaymentCardController {
    */
   @Get(':id')
   @RequirePermissions('center.read')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.paymentCardService.findOne(id);
   }
 
@@ -78,7 +79,7 @@ export class PaymentCardController {
   @Patch(':id')
   @RequirePermissions('center.manage')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updatePaymentCardDto: UpdatePaymentCardDto,
   ) {
     return this.paymentCardService.update(id, updatePaymentCardDto);
@@ -90,7 +91,7 @@ export class PaymentCardController {
   @Patch(':id/set-primary')
   @RequirePermissions('center.manage')
   @HttpCode(HttpStatus.OK)
-  setPrimary(@Param('id') id: string) {
+  setPrimary(@Param('id', ParseIntPipe) id: number) {
     return this.paymentCardService.setPrimary(id);
   }
 
@@ -100,7 +101,7 @@ export class PaymentCardController {
   @Patch(':id/toggle-visibility')
   @RequirePermissions('center.manage')
   @HttpCode(HttpStatus.OK)
-  toggleVisibility(@Param('id') id: string) {
+  toggleVisibility(@Param('id', ParseIntPipe) id: number) {
     return this.paymentCardService.toggleVisibility(id);
   }
 
@@ -110,7 +111,7 @@ export class PaymentCardController {
   @Delete(':id/soft')
   @RequirePermissions('center.manage')
   @HttpCode(HttpStatus.OK)
-  softDelete(@Param('id') id: string) {
+  softDelete(@Param('id', ParseIntPipe) id: number) {
     return this.paymentCardService.softDelete(id);
   }
 
@@ -120,7 +121,7 @@ export class PaymentCardController {
   @Delete(':id')
   @RequirePermissions('center.manage')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.paymentCardService.remove(id);
   }
 
@@ -130,7 +131,7 @@ export class PaymentCardController {
   @Post('reorder')
   @RequirePermissions('center.manage')
   @HttpCode(HttpStatus.OK)
-  reorder(@Body() body: { centerId: string; cardIds: string[] }) {
+  reorder(@Body() body: { centerId: number; cardIds: number[] }) {
     return this.paymentCardService.reorder(body.centerId, body.cardIds);
   }
 }

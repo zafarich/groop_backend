@@ -132,7 +132,7 @@ async restore(id: string) {
 
 ```typescript
 // Find all (excluding deleted)
-async findAll(centerId?: string) {
+async findAll(centerId?: number) {
   const where: any = {
     isDeleted: false,  // ✅ Har doim qo'shing
   };
@@ -164,7 +164,7 @@ async findOne(id: string) {
 ### 5. Query Methods - Include Deleted (Admin Only)
 
 ```typescript
-async findAllWithDeleted(centerId?: string) {
+async findAllWithDeleted(centerId?: number) {
   const where: any = {};
 
   if (centerId) {
@@ -178,7 +178,7 @@ async findAllWithDeleted(centerId?: string) {
   });
 }
 
-async findDeleted(centerId?: string) {
+async findDeleted(centerId?: number) {
   const where: any = {
     isDeleted: true,  // Faqat o'chirilganlar
   };
@@ -207,14 +207,14 @@ export class UserController {
   // GET /users - Active users only
   @Get()
   @RequirePermissions('user.read')
-  findAll(@Query('centerId') centerId?: string) {
+  findAll(@Query('centerId') centerId?: number) {
     return this.userService.findAll(centerId);
   }
 
   // GET /users/deleted - Deleted users (admin only)
   @Get('deleted')
   @RequirePermissions('user.manage')
-  findDeleted(@Query('centerId') centerId?: string) {
+  findDeleted(@Query('centerId') centerId?: number) {
     return this.userService.findDeleted(centerId);
   }
 
@@ -386,7 +386,7 @@ async softDelete(id: string) {
 
 ```typescript
 // Center o'chirilganda uning barcha foydalanuvchilarini ham o'chirish
-async softDelete(centerId: string) {
+async softDelete(centerId: number) {
   // Soft delete center
   await this.prisma.center.update({
     where: { id: centerId },

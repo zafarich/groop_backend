@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { CenterBotService } from './center-bot.service';
 import { CreateCenterBotDto, UpdateCenterBotDto } from './dto';
@@ -21,39 +22,39 @@ export class CenterBotController {
   constructor(private readonly centerBotService: CenterBotService) {}
 
   @Post()
-  @RequirePermissions('center.manage', 'telegram.manage')
+  @RequirePermissions('telegram.manage')
   create(@Body() createCenterBotDto: CreateCenterBotDto) {
     return this.centerBotService.create(createCenterBotDto);
   }
 
   @Get()
   @RequirePermissions('center.read')
-  findAll(@Query('centerId') centerId?: string) {
+  findAll(@Query('centerId', new ParseIntPipe({ optional: true })) centerId?: number) {
     return this.centerBotService.findAll(centerId);
   }
 
   @Get(':id')
   @RequirePermissions('center.read')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.centerBotService.findOne(id);
   }
 
   @Get(':id/webhook-info')
   @RequirePermissions('center.manage', 'telegram.manage')
-  getWebhookInfo(@Param('id') id: string) {
+  getWebhookInfo(@Param('id', ParseIntPipe) id: number) {
     return this.centerBotService.getWebhookInfo(id);
   }
 
   @Post(':id/reset-webhook')
   @RequirePermissions('center.manage', 'telegram.manage')
-  resetWebhook(@Param('id') id: string) {
+  resetWebhook(@Param('id', ParseIntPipe) id: number) {
     return this.centerBotService.resetWebhook(id);
   }
 
   @Patch(':id')
   @RequirePermissions('center.manage', 'telegram.manage')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updateCenterBotDto: UpdateCenterBotDto,
   ) {
     return this.centerBotService.update(id, updateCenterBotDto);
@@ -61,7 +62,7 @@ export class CenterBotController {
 
   @Delete(':id')
   @RequirePermissions('center.manage', 'telegram.manage')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.centerBotService.remove(id);
   }
 }

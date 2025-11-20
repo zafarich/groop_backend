@@ -3,7 +3,7 @@ import {
   IsString,
   IsOptional,
   IsBoolean,
-  IsUUID,
+  IsNumber,
 } from 'class-validator';
 
 export class CreateCenterDto {
@@ -23,9 +23,8 @@ export class CreateCenterDto {
   @IsOptional()
   logoUrl?: string;
 
-  @IsUUID()
-  @IsOptional()
-  ownerUserId?: string;
+  @IsNumber()
+  ownerUserId?: number;
 
   @IsBoolean()
   @IsOptional()

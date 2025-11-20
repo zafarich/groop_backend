@@ -46,7 +46,7 @@ export class TelegramService {
     });
 
     // Auto-create linked User if requested (for students)
-    if (createLinkedUser && centerId) {
+    if (createLinkedUser && centerId && rest.phoneNumber) {
       const linkedUser = await this.prisma.user.create({
         data: {
           firstName: rest.firstName,
@@ -80,7 +80,7 @@ export class TelegramService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const telegramUser = await this.prisma.telegramUser.findUnique({
       where: { id },
     });
@@ -105,7 +105,7 @@ export class TelegramService {
     return telegramUser;
   }
 
-  async update(id: string, updateTelegramUserDto: UpdateTelegramUserDto) {
+  async update(id: number, updateTelegramUserDto: UpdateTelegramUserDto) {
     const telegramUser = await this.prisma.telegramUser.findUnique({
       where: { id },
     });
@@ -120,7 +120,7 @@ export class TelegramService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const telegramUser = await this.prisma.telegramUser.findUnique({
       where: { id },
     });
@@ -152,7 +152,7 @@ export class TelegramService {
     // Verify bot and secret token
     const bot = await this.prisma.centerTelegramBot.findFirst({
       where: {
-        id: botId,
+        id: parseInt(botId, 10),
         secretToken,
         isActive: true,
       },
@@ -228,11 +228,15 @@ export class TelegramService {
       });
 
       // Auto-create linked User for students
+      // Generate a default phone number from telegram ID if not available
+      const defaultPhoneNumber = `998${telegramId.slice(-9).padStart(9, '0')}`;
+      
       const linkedUser = await this.prisma.user.create({
         data: {
           firstName: message.from.first_name,
           lastName: message.from.last_name,
           username: message.from.username,
+          phoneNumber: defaultPhoneNumber,
           centerId: bot.centerId,
           userType: 'STUDENT',
           authProvider: 'telegram',
@@ -269,12 +273,15 @@ export class TelegramService {
 
       // Create linked User if doesn't exist
       if (!telegramUser.user && bot.centerId) {
+        // Generate a default phone number from telegram ID if not available
+        const defaultPhoneNumber = telegramUser.phoneNumber || `998${telegramId.slice(-9).padStart(9, '0')}`;
+        
         const linkedUser = await this.prisma.user.create({
           data: {
             firstName: telegramUser.firstName,
             lastName: telegramUser.lastName,
             username: telegramUser.username,
-            phoneNumber: telegramUser.phoneNumber,
+            phoneNumber: defaultPhoneNumber,
             centerId: bot.centerId,
             userType: 'STUDENT',
             authProvider: 'telegram',

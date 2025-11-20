@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsBoolean,
   IsUUID,
+  IsNumber,
 } from 'class-validator';
 
 export class CreateTelegramUserDto {
@@ -11,9 +12,9 @@ export class CreateTelegramUserDto {
   @IsNotEmpty()
   telegramId: string;
 
-  @IsUUID()
+  @IsNumber()
   @IsOptional()
-  centerId?: string;
+  centerId?: number;
 
   @IsString()
   @IsOptional()

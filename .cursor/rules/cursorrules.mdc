@@ -71,7 +71,7 @@ async findOne(id: string): Promise<User> {
 interface CreateUserData {
   email?: string;
   password?: string;
-  centerId: string;
+  centerId: number;
 }
 
 // ✅ Use enums for constants
@@ -130,7 +130,7 @@ export class CreateUserDto {
 
   @IsUUID()
   @IsNotEmpty()
-  centerId: string;
+  centerId: number;
 
   @IsEnum(UserType)
   @IsOptional()
@@ -154,7 +154,7 @@ export class UserController {
 
   @Get()
   @RequirePermissions('user.read')
-  findAll(@Query('centerId') centerId?: string) {}
+  findAll(@Query('centerId') centerId?: number) {}
 
   @Get(':id')
   @RequirePermissions('user.read')

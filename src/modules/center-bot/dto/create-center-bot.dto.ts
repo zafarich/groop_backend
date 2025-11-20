@@ -1,15 +1,17 @@
 import {
   IsNotEmpty,
   IsString,
-  IsUUID,
+  IsInt,
   IsOptional,
   IsBoolean,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateCenterBotDto {
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  centerId: string;
+  @Type(() => Number)
+  centerId: number;
 
   @IsString()
   @IsNotEmpty()

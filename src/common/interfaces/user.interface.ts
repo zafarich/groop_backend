@@ -7,7 +7,7 @@ export interface IUser {
   phoneNumber?: string;
   isActive: boolean;
   emailVerified: boolean;
-  centerId: string;
+  centerId: number;
   createdAt: Date;
   updatedAt: Date;
   center?: ICenter;
@@ -30,7 +30,7 @@ export interface IRole {
   slug: string;
   description?: string;
   isSystem: boolean;
-  centerId: string;
+  centerId: number;
   createdAt: Date;
   updatedAt: Date;
   rolePermissions?: IRolePermission[];
@@ -66,7 +66,7 @@ export interface IRolePermission {
 export interface IJwtPayload {
   sub: string;
   email: string;
-  centerId: string;
+  centerId: number;
   iat?: number;
   exp?: number;
 }

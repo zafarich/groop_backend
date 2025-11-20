@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto, UpdateUserDto, AssignRoleDto } from './dto';
@@ -29,7 +30,7 @@ export class UserController {
 
   @Get()
   @RequirePermissions('user.read')
-  findAll(@Query('centerId') centerId?: string) {
+  findAll(@Query('centerId', new ParseIntPipe({ optional: true })) centerId?: number) {
     return this.userService.findAll(centerId);
   }
 
@@ -40,31 +41,31 @@ export class UserController {
 
   @Get(':id')
   @RequirePermissions('user.read')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.userService.findOne(id);
   }
 
   @Patch(':id')
   @RequirePermissions('user.update')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() updateUserDto: UpdateUserDto) {
     return this.userService.update(id, updateUserDto);
   }
 
   @Delete(':id')
   @RequirePermissions('user.delete')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.userService.remove(id);
   }
 
   @Post(':id/roles')
   @RequirePermissions('user.assign-role')
-  assignRole(@Param('id') id: string, @Body() assignRoleDto: AssignRoleDto) {
+  assignRole(@Param('id', ParseIntPipe) id: number, @Body() assignRoleDto: AssignRoleDto) {
     return this.userService.assignRole(id, assignRoleDto);
   }
 
   @Delete(':id/roles/:roleId')
   @RequirePermissions('user.remove-role')
-  removeRole(@Param('id') id: string, @Param('roleId') roleId: string) {
+  removeRole(@Param('id', ParseIntPipe) id: number, @Param('roleId', ParseIntPipe) roleId: number) {
     return this.userService.removeRole(id, roleId);
   }
 }

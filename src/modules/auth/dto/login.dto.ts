@@ -1,9 +1,12 @@
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, Matches } from 'class-validator';
 
 export class LoginDto {
-  @IsEmail()
+  @IsString()
   @IsNotEmpty()
-  email: string;
+  @Matches(/^998[0-9]{9}$/, {
+    message: 'Phone number must be in format 998XXXXXXXXX',
+  })
+  phoneNumber: string;
 
   @IsString()
   @IsNotEmpty()

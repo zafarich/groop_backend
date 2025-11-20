@@ -67,7 +67,7 @@ export class PaymentCardService {
   /**
    * Get all payment cards (optionally filtered by centerId)
    */
-  async findAll(centerId?: string, includeHidden = false) {
+  async findAll(centerId?: number, includeHidden = false) {
     const where: any = {};
 
     if (centerId) {
@@ -96,7 +96,7 @@ export class PaymentCardService {
   /**
    * Get visible payment cards for a center (for public use)
    */
-  async findVisibleByCenter(centerId: string) {
+  async findVisibleByCenter(centerId: number) {
     return this.prisma.centerPaymentCard.findMany({
       where: {
         centerId,
@@ -120,7 +120,7 @@ export class PaymentCardService {
   /**
    * Get primary payment card for a center
    */
-  async findPrimaryByCenter(centerId: string) {
+  async findPrimaryByCenter(centerId: number) {
     const primaryCard = await this.prisma.centerPaymentCard.findFirst({
       where: {
         centerId,
@@ -164,7 +164,7 @@ export class PaymentCardService {
   /**
    * Get a single payment card by ID
    */
-  async findOne(id: string) {
+  async findOne(id: number) {
     const paymentCard = await this.prisma.centerPaymentCard.findUnique({
       where: { id },
       include: {
@@ -188,7 +188,7 @@ export class PaymentCardService {
   /**
    * Update a payment card
    */
-  async update(id: string, updatePaymentCardDto: UpdatePaymentCardDto) {
+  async update(id: number, updatePaymentCardDto: UpdatePaymentCardDto) {
     const paymentCard = await this.prisma.centerPaymentCard.findUnique({
       where: { id },
     });
@@ -234,7 +234,7 @@ export class PaymentCardService {
   /**
    * Soft delete - set isVisible to false
    */
-  async softDelete(id: string) {
+  async softDelete(id: number) {
     const paymentCard = await this.prisma.centerPaymentCard.findUnique({
       where: { id },
     });
@@ -276,7 +276,7 @@ export class PaymentCardService {
   /**
    * Hard delete - permanently remove from database
    */
-  async remove(id: string) {
+  async remove(id: number) {
     const paymentCard = await this.prisma.centerPaymentCard.findUnique({
       where: { id },
     });
@@ -293,7 +293,7 @@ export class PaymentCardService {
   /**
    * Set a card as primary
    */
-  async setPrimary(id: string) {
+  async setPrimary(id: number) {
     const paymentCard = await this.prisma.centerPaymentCard.findUnique({
       where: { id },
     });
@@ -328,7 +328,7 @@ export class PaymentCardService {
   /**
    * Toggle visibility
    */
-  async toggleVisibility(id: string) {
+  async toggleVisibility(id: number) {
     const paymentCard = await this.prisma.centerPaymentCard.findUnique({
       where: { id },
     });
@@ -348,7 +348,7 @@ export class PaymentCardService {
   /**
    * Reorder cards
    */
-  async reorder(centerId: string, cardIds: string[]) {
+  async reorder(centerId: number, cardIds: number[]) {
     const cards = await this.prisma.centerPaymentCard.findMany({
       where: {
         centerId,

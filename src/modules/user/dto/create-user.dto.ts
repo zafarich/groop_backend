@@ -1,14 +1,15 @@
 import {
-  IsEmail,
   IsNotEmpty,
   IsString,
   MinLength,
   IsOptional,
-  IsUUID,
+  IsInt,
   IsBoolean,
   IsEnum,
   IsIn,
+  Matches,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum UserType {
   ADMIN = 'ADMIN',
@@ -18,10 +19,6 @@ export enum UserType {
 }
 
 export class CreateUserDto {
-  @IsEmail()
-  @IsOptional()  // Optional for Telegram-only users
-  email?: string;
-
   @IsString()
   @IsOptional()  // Optional for Telegram-only users
   @MinLength(6)
@@ -40,8 +37,11 @@ export class CreateUserDto {
   lastName?: string;
 
   @IsString()
-  @IsOptional()
-  phoneNumber?: string;
+  @IsNotEmpty()
+  @Matches(/^998[0-9]{9}$/, {
+    message: 'Phone number must be in format 998XXXXXXXXX',
+  })
+  phoneNumber: string;
 
   @IsEnum(UserType)
   @IsOptional()
@@ -52,13 +52,15 @@ export class CreateUserDto {
   @IsIn(['local', 'telegram', 'google'])
   authProvider?: string;
 
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  centerId: string;
+  @Type(() => Number)
+  centerId: number;
 
-  @IsUUID()
+  @IsInt()
   @IsOptional()
-  telegramUserId?: string;
+  @Type(() => Number)
+  telegramUserId?: number;
 
   @IsBoolean()
   @IsOptional()

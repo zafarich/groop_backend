@@ -48,7 +48,7 @@ export class PlanService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const plan = await this.prisma.plan.findUnique({
       where: { id },
       include: {
@@ -90,7 +90,7 @@ export class PlanService {
     return plan;
   }
 
-  async update(id: string, updatePlanDto: UpdatePlanDto) {
+  async update(id: number, updatePlanDto: UpdatePlanDto) {
     const plan = await this.prisma.plan.findUnique({
       where: { id },
     });
@@ -116,7 +116,7 @@ export class PlanService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const plan = await this.prisma.plan.findUnique({
       where: { id },
       include: {

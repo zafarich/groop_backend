@@ -99,7 +99,7 @@ export class CenterBotService {
     return this.findOne(bot.id);
   }
 
-  async findAll(centerId?: string) {
+  async findAll(centerId?: number) {
     const where = centerId ? { centerId } : {};
 
     return this.prisma.centerTelegramBot.findMany({
@@ -119,7 +119,7 @@ export class CenterBotService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const bot = await this.prisma.centerTelegramBot.findUnique({
       where: { id },
       include: {
@@ -139,7 +139,7 @@ export class CenterBotService {
     };
   }
 
-  async findOneInternal(id: string) {
+  async findOneInternal(id: number) {
     const bot = await this.prisma.centerTelegramBot.findUnique({
       where: { id },
       include: {
@@ -154,7 +154,7 @@ export class CenterBotService {
     return bot;
   }
 
-  async findBySecretToken(botId: string, secretToken: string) {
+  async findBySecretToken(botId: number, secretToken: string) {
     const bot = await this.prisma.centerTelegramBot.findFirst({
       where: {
         id: botId,
@@ -169,7 +169,7 @@ export class CenterBotService {
     return bot;
   }
 
-  async update(id: string, updateCenterBotDto: UpdateCenterBotDto) {
+  async update(id: number, updateCenterBotDto: UpdateCenterBotDto) {
     const bot = await this.prisma.centerTelegramBot.findUnique({
       where: { id },
     });
@@ -223,7 +223,7 @@ export class CenterBotService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const bot = await this.prisma.centerTelegramBot.findUnique({
       where: { id },
     });
@@ -246,7 +246,7 @@ export class CenterBotService {
     return { message: 'Bot deleted successfully' };
   }
 
-  async getWebhookInfo(id: string) {
+  async getWebhookInfo(id: number) {
     const bot = await this.findOneInternal(id);
 
     const webhookInfo = await this.telegramApi.getWebhookInfo(bot.botToken);
@@ -261,7 +261,7 @@ export class CenterBotService {
     };
   }
 
-  async resetWebhook(id: string) {
+  async resetWebhook(id: number) {
     const bot = await this.findOneInternal(id);
 
     // Delete old webhook
@@ -300,7 +300,7 @@ export class CenterBotService {
     return crypto.randomBytes(32).toString('hex');
   }
 
-  private buildWebhookUrl(botId: string, secretToken: string): string {
+  private buildWebhookUrl(botId: number, secretToken: string): string {
     const baseUrl = process.env.APP_URL || 'http://localhost:3000';
     return `${baseUrl}/api/v1/telegram/webhook/bot/${botId}/${secretToken}`;
   }

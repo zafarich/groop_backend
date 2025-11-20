@@ -8,18 +8,7 @@ export class UserService {
   constructor(private prisma: PrismaService) {}
 
   async create(createUserDto: CreateUserDto) {
-    const { email, password, username, centerId, ...rest } = createUserDto;
-
-    // Check if user already exists (by email if provided)
-    if (email) {
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email },
-      });
-
-      if (existingUser) {
-        throw new ConflictException('User with this email already exists');
-      }
-    }
+    const { password, username, centerId, ...rest } = createUserDto;
 
     // Check if center exists
     const center = await this.prisma.center.findUnique({
@@ -39,7 +28,6 @@ export class UserService {
     // Create user
     const user = await this.prisma.user.create({
       data: {
-        email,
         username,
         password: hashedPassword,
         centerId,
@@ -59,7 +47,7 @@ export class UserService {
     return this.sanitizeUser(user);
   }
 
-  async findAll(centerId?: string) {
+  async findAll(centerId?: number) {
     const where = centerId ? { centerId } : {};
 
     const users = await this.prisma.user.findMany({
@@ -80,7 +68,7 @@ export class UserService {
     return users.map((user) => this.sanitizeUser(user));
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const user = await this.prisma.user.findUnique({
       where: { id },
       include: {
@@ -108,44 +96,15 @@ export class UserService {
     return this.sanitizeUser(user);
   }
 
-  async findByEmail(email: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      include: {
-        center: true,
-        userRoles: {
-          include: {
-            role: true,
-          },
-        },
-      },
-    });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
 
-    return this.sanitizeUser(user);
-  }
-
-  async update(id: string, updateUserDto: UpdateUserDto) {
+  async update(id: number, updateUserDto: UpdateUserDto) {
     const user = await this.prisma.user.findUnique({
       where: { id },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
-    }
-
-    // Check if email is being updated and if it's already taken
-    if (updateUserDto.email && updateUserDto.email !== user.email) {
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email: updateUserDto.email },
-      });
-
-      if (existingUser) {
-        throw new ConflictException('Email already in use');
-      }
     }
 
     const updatedUser = await this.prisma.user.update({
@@ -164,7 +123,7 @@ export class UserService {
     return this.sanitizeUser(updatedUser);
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const user = await this.prisma.user.findUnique({
       where: { id },
     });
@@ -180,7 +139,7 @@ export class UserService {
     return { message: 'User deleted successfully' };
   }
 
-  async assignRole(userId: string, assignRoleDto: AssignRoleDto) {
+  async assignRole(userId: number, assignRoleDto: AssignRoleDto) {
     const { roleId } = assignRoleDto;
 
     // Check if user exists
@@ -226,7 +185,7 @@ export class UserService {
     return this.findOne(userId);
   }
 
-  async removeRole(userId: string, roleId: string) {
+  async removeRole(userId: number, roleId: number) {
     const userRole = await this.prisma.userRole.findUnique({
       where: {
         userId_roleId: {
@@ -249,7 +208,7 @@ export class UserService {
     return { message: 'Role removed from user successfully' };
   }
 
-  async getUsersByCenter(centerId: string) {
+  async getUsersByCenter(centerId: number) {
     return this.findAll(centerId);
   }
 

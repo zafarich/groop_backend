@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  ParseIntPipe
 } from '@nestjs/common';
 import { PermissionService } from './permission.service';
 import { CreatePermissionDto, UpdatePermissionDto } from './dto';
@@ -40,19 +41,19 @@ export class PermissionController {
 
   @Get(':id')
   @RequirePermissions('permission.read')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.permissionService.findOne(id);
   }
 
   @Patch(':id')
   @RequirePermissions('permission.update')
-  update(@Param('id') id: string, @Body() updatePermissionDto: UpdatePermissionDto) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() updatePermissionDto: UpdatePermissionDto) {
     return this.permissionService.update(id, updatePermissionDto);
   }
 
   @Delete(':id')
   @RequirePermissions('permission.delete')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.permissionService.remove(id);
   }
 }

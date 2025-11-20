@@ -1,7 +1,9 @@
-import { IsNotEmpty, IsUUID } from 'class-validator';
+import { IsNotEmpty, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class AssignPermissionDto {
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  permissionId: string;
+  @Type(() => Number)
+  permissionId: number;
 }

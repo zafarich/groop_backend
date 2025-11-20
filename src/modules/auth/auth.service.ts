@@ -12,15 +12,15 @@ export class AuthService {
   ) {}
 
   async register(registerDto: RegisterDto) {
-    const { email, password, username, centerId, ...rest } = registerDto;
+    const { phoneNumber, password, username, centerId, ...rest } = registerDto;
 
     // Check if user already exists
     const existingUser = await this.prisma.user.findUnique({
-      where: { email },
+      where: { phoneNumber },
     });
 
     if (existingUser) {
-      throw new ConflictException('User with this email already exists');
+      throw new ConflictException('User with this phone number already exists');
     }
 
     // Check if center exists
@@ -38,7 +38,7 @@ export class AuthService {
     // Create user
     const user = await this.prisma.user.create({
       data: {
-        email,
+        phoneNumber,
         username,
         password: hashedPassword,
         centerId,
@@ -52,7 +52,7 @@ export class AuthService {
     // Generate tokens
     const tokens = await this.generateTokens(
       user.id,
-      user.email || user.username || user.id,
+      user.phoneNumber,
       user.centerId,
     );
 
@@ -66,11 +66,11 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
-    const { email, password } = loginDto;
+    const { phoneNumber, password } = loginDto;
 
     // Find user
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { phoneNumber },
       include: {
         center: true,
         userRoles: {
@@ -115,7 +115,7 @@ export class AuthService {
     // Generate tokens
     const tokens = await this.generateTokens(
       user.id,
-      user.email || user.username || user.id,
+      user.phoneNumber,
       user.centerId,
     );
 
@@ -160,9 +160,7 @@ export class AuthService {
       // Generate new tokens
       const tokens = await this.generateTokens(
         storedToken.user.id,
-        storedToken.user.email ||
-          storedToken.user.username ||
-          storedToken.user.id,
+        storedToken.user.phoneNumber,
         storedToken.user.centerId,
       );
 
@@ -180,7 +178,7 @@ export class AuthService {
     }
   }
 
-  async logout(userId: string, refreshToken: string) {
+  async logout(userId: number, refreshToken: string) {
     await this.prisma.refreshToken.deleteMany({
       where: {
         userId,
@@ -191,7 +189,7 @@ export class AuthService {
     return { message: 'Logged out successfully' };
   }
 
-  async validateUser(userId: string) {
+  async validateUser(userId: number) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -219,8 +217,8 @@ export class AuthService {
     return user;
   }
 
-  private async generateTokens(userId: string, email: string, centerId: string) {
-    const payload = { sub: userId, email, centerId };
+  private async generateTokens(userId: number, phoneNumber: string, centerId: number) {
+    const payload = { sub: userId, phoneNumber, centerId };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
@@ -239,7 +237,7 @@ export class AuthService {
     };
   }
 
-  private async saveRefreshToken(userId: string, token: string) {
+  private async saveRefreshToken(userId: number, token: string) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
 

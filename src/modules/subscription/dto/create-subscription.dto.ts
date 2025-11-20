@@ -1,12 +1,13 @@
 import {
   IsNotEmpty,
   IsString,
-  IsUUID,
+  IsInt,
   IsEnum,
   IsBoolean,
   IsOptional,
   IsDateString,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum SubscriptionStatus {
   TRIAL = 'TRIAL',
@@ -16,13 +17,15 @@ export enum SubscriptionStatus {
 }
 
 export class CreateSubscriptionDto {
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  centerId: string;
+  @Type(() => Number)
+  centerId: number;
 
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  planId: string;
+  @Type(() => Number)
+  planId: number;
 
   @IsEnum(SubscriptionStatus)
   @IsOptional()

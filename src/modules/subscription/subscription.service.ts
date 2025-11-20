@@ -69,7 +69,7 @@ export class SubscriptionService {
     });
   }
 
-  async findAll(centerId?: string, status?: string) {
+  async findAll(centerId?: number, status?: string) {
     const where: any = {};
 
     if (centerId) {
@@ -106,7 +106,7 @@ export class SubscriptionService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const subscription = await this.prisma.centerSubscription.findUnique({
       where: { id },
       include: {
@@ -122,7 +122,7 @@ export class SubscriptionService {
     return subscription;
   }
 
-  async findByCenterId(centerId: string) {
+  async findByCenterId(centerId: number) {
     return this.prisma.centerSubscription.findMany({
       where: { centerId },
       include: {
@@ -134,7 +134,7 @@ export class SubscriptionService {
     });
   }
 
-  async getActiveSubscription(centerId: string) {
+  async getActiveSubscription(centerId: number) {
     const subscription = await this.prisma.centerSubscription.findFirst({
       where: {
         centerId,
@@ -159,7 +159,7 @@ export class SubscriptionService {
     return subscription;
   }
 
-  async update(id: string, updateSubscriptionDto: UpdateSubscriptionDto) {
+  async update(id: number, updateSubscriptionDto: UpdateSubscriptionDto) {
     const subscription = await this.prisma.centerSubscription.findUnique({
       where: { id },
     });
@@ -192,7 +192,7 @@ export class SubscriptionService {
     });
   }
 
-  async cancel(id: string, immediately: boolean = false) {
+  async cancel(id: number, immediately: boolean = false) {
     const subscription = await this.prisma.centerSubscription.findUnique({
       where: { id },
     });
@@ -230,7 +230,7 @@ export class SubscriptionService {
     }
   }
 
-  async reactivate(id: string) {
+  async reactivate(id: number) {
     const subscription = await this.prisma.centerSubscription.findUnique({
       where: { id },
     });

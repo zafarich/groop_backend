@@ -46,14 +46,13 @@ export class CenterService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const center = await this.prisma.center.findUnique({
       where: { id },
       include: {
         users: {
           select: {
             id: true,
-            email: true,
             firstName: true,
             lastName: true,
             isActive: true,
@@ -95,7 +94,7 @@ export class CenterService {
     return center;
   }
 
-  async update(id: string, updateCenterDto: UpdateCenterDto) {
+  async update(id: number, updateCenterDto: UpdateCenterDto) {
     const center = await this.prisma.center.findUnique({
       where: { id },
     });
@@ -117,11 +116,13 @@ export class CenterService {
 
     return this.prisma.center.update({
       where: { id },
-      data: updateCenterDto,
+      data: {
+        ...updateCenterDto,
+      },
     });
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const center = await this.prisma.center.findUnique({
       where: { id },
       include: {
@@ -148,7 +149,7 @@ export class CenterService {
     return { message: 'Center deleted successfully' };
   }
 
-  async getCenterStats(id: string) {
+  async getCenterStats(id: number) {
     const center = await this.prisma.center.findUnique({
       where: { id },
       include: {

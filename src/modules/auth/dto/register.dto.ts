@@ -1,16 +1,20 @@
 import {
-  IsEmail,
   IsNotEmpty,
   IsString,
   MinLength,
   IsOptional,
-  IsUUID,
+  IsInt,
+  Matches,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class RegisterDto {
-  @IsEmail()
+  @IsString()
   @IsNotEmpty()
-  email: string;
+  @Matches(/^998[0-9]{9}$/, {
+    message: 'Phone number must be in format 998XXXXXXXXX',
+  })
+  phoneNumber: string;
 
   @IsString()
   @IsNotEmpty()
@@ -29,11 +33,8 @@ export class RegisterDto {
   @IsOptional()
   lastName?: string;
 
-  @IsString()
-  @IsOptional()
-  phoneNumber?: string;
-
-  @IsUUID()
+  @IsInt()
   @IsNotEmpty()
-  centerId: string;
+  @Type(() => Number)
+  centerId: number;
 }

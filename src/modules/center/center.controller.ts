@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   UseGuards,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { CenterService } from './center.service';
 import { CreateCenterDto, UpdateCenterDto } from './dto';
@@ -33,25 +34,25 @@ export class CenterController {
 
   @Get(':id')
   @RequirePermissions('center.read')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.centerService.findOne(id);
   }
 
   @Get(':id/stats')
   @RequirePermissions('center.read')
-  getCenterStats(@Param('id') id: string) {
+  getCenterStats(@Param('id', ParseIntPipe) id: number) {
     return this.centerService.getCenterStats(id);
   }
 
   @Patch(':id')
   @RequirePermissions('center.update')
-  update(@Param('id') id: string, @Body() updateCenterDto: UpdateCenterDto) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() updateCenterDto: UpdateCenterDto) {
     return this.centerService.update(id, updateCenterDto);
   }
 
   @Delete(':id')
   @RequirePermissions('center.delete')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.centerService.remove(id);
   }
 }

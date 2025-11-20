@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  ParseIntPipe
 } from '@nestjs/common';
 import { PlanService } from './plan.service';
 import { CreatePlanDto, UpdatePlanDto } from './dto';
@@ -43,19 +44,19 @@ export class PlanController {
 
   @Get(':id')
   @Public()
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.planService.findOne(id);
   }
 
   @Patch(':id')
   @RequirePermissions('plan.update')
-  update(@Param('id') id: string, @Body() updatePlanDto: UpdatePlanDto) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() updatePlanDto: UpdatePlanDto) {
     return this.planService.update(id, updatePlanDto);
   }
 
   @Delete(':id')
   @RequirePermissions('plan.delete')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.planService.remove(id);
   }
 }

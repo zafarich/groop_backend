@@ -5,7 +5,7 @@ import { IsOptional, IsUUID, IsBoolean } from 'class-validator';
 export class UpdatePaymentCardDto extends PartialType(CreatePaymentCardDto) {
   @IsUUID()
   @IsOptional()
-  centerId?: string;
+  centerId?: number;
 
   @IsBoolean()
   @IsOptional()

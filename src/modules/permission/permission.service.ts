@@ -49,7 +49,7 @@ export class PermissionService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: number) {
     const permission = await this.prisma.permission.findUnique({
       where: { id },
       include: {
@@ -87,7 +87,7 @@ export class PermissionService {
     return permission;
   }
 
-  async update(id: string, updatePermissionDto: UpdatePermissionDto) {
+  async update(id: number, updatePermissionDto: UpdatePermissionDto) {
     const permission = await this.prisma.permission.findUnique({
       where: { id },
     });
@@ -113,7 +113,7 @@ export class PermissionService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     const permission = await this.prisma.permission.findUnique({
       where: { id },
     });

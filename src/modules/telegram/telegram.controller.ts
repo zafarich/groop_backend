@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   Headers,
+  ParseIntPipe
 } from '@nestjs/common';
 import { TelegramService } from './telegram.service';
 import {
@@ -69,7 +70,7 @@ export class TelegramController {
   @Get('users/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions('telegram.manage')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.telegramService.findOne(id);
   }
 
@@ -84,7 +85,7 @@ export class TelegramController {
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions('telegram.manage')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updateTelegramUserDto: UpdateTelegramUserDto,
   ) {
     return this.telegramService.update(id, updateTelegramUserDto);
@@ -93,7 +94,7 @@ export class TelegramController {
   @Delete('users/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions('telegram.manage')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseIntPipe) id: number) {
     return this.telegramService.remove(id);
   }
 }
