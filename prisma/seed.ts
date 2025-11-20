@@ -420,6 +420,14 @@ async function main() {
 
   console.log('✅ Assigned admin role to admin user');
 
+  // Update center owner
+  await prisma.center.update({
+    where: { id: center.id },
+    data: { ownerUserId: adminUser.id },
+  });
+
+  console.log('✅ Updated center owner');
+
   console.log('\n🎉 Seeding completed successfully!');
   console.log('\n📝 Default credentials:');
   console.log('   Phone: 998901234567');
