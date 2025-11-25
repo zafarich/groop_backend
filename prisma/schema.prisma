@@ -369,3 +369,18 @@ enum UserType {
   STUDENT    // O'quvchi
   PARENT     // Ota-ona (optional, future use)
 }
+
+// SMS Verification - Vaqtincha saqlash uchun
+model SmsVerification {
+  id          Int      @id @default(autoincrement())
+  phoneNumber String   @unique
+  code        String
+  payload     Json     // Ro'yxatdan o'tish ma'lumotlari (Center name, user info, etc.)
+  attempts    Int      @default(0)
+  expiresAt   DateTime
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("sms_verifications")
+}

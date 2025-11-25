@@ -1,12 +1,39 @@
-import { Controller, Post, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  Request,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, RefreshTokenDto } from './dto';
+import {
+  RegisterDto,
+  LoginDto,
+  RefreshTokenDto,
+  RegisterCenterDto,
+  VerifySmsDto,
+} from './dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Public()
+  @Post('register-center')
+  async registerCenterInit(@Body() registerCenterDto: RegisterCenterDto) {
+    return this.authService.registerCenterInit(registerCenterDto);
+  }
+
+  @Public()
+  @Post('verify-center')
+  @HttpCode(HttpStatus.OK)
+  async registerCenterVerify(@Body() verifySmsDto: VerifySmsDto) {
+    return this.authService.registerCenterVerify(verifySmsDto);
+  }
 
   @Public()
   @Post('register')
@@ -42,4 +69,3 @@ export class AuthController {
     return req.user;
   }
 }
-

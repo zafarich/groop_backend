@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { PrismaModule } from '../../common/prisma/prisma.module';
+import { EskizModule } from '../eskiz/eskiz.module';
 
 @Module({
   imports: [
@@ -14,10 +15,10 @@ import { PrismaModule } from '../../common/prisma/prisma.module';
       secret: process.env.JWT_SECRET || 'default-secret-key',
       signOptions: { expiresIn: '15m' },
     }),
+    EskizModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}
-
