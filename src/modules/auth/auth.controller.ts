@@ -14,6 +14,9 @@ import {
   RefreshTokenDto,
   RegisterCenterDto,
   VerifySmsDto,
+  ForgotPasswordInitDto,
+  ForgotPasswordVerifyDto,
+  ResetPasswordDto,
 } from './dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
@@ -60,6 +63,40 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(@Request() req, @Body() body: { refreshToken: string }) {
     return this.authService.logout(req.user.id, body.refreshToken);
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPasswordInit(
+    @Body() forgotPasswordInitDto: ForgotPasswordInitDto,
+  ) {
+    return this.authService.forgotPasswordInit(forgotPasswordInitDto);
+  }
+
+  @Public()
+  @Post('forgot-password/resend')
+  @HttpCode(HttpStatus.OK)
+  async resendForgotPasswordSms(
+    @Body() forgotPasswordInitDto: ForgotPasswordInitDto,
+  ) {
+    return this.authService.resendForgotPasswordSms(forgotPasswordInitDto);
+  }
+
+  @Public()
+  @Post('verify-forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPasswordVerify(
+    @Body() forgotPasswordVerifyDto: ForgotPasswordVerifyDto,
+  ) {
+    return this.authService.forgotPasswordVerify(forgotPasswordVerifyDto);
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
   }
 
   @UseGuards(JwtAuthGuard)

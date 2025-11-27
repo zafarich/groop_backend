@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  ConflictException,
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
@@ -13,10 +7,26 @@ import {
   RefreshTokenDto,
   RegisterCenterDto,
   VerifySmsDto,
+  ForgotPasswordInitDto,
+  ForgotPasswordVerifyDto,
+  ResetPasswordDto,
 } from './dto';
 import * as bcrypt from 'bcrypt';
 import { UserType } from '@prisma/client';
 import { EskizService } from '../eskiz/eskiz.service';
+import {
+  PhoneNumberAlreadyExistsException,
+  InvalidSmsCodeException,
+  ExpiredSmsCodeException,
+  VerificationSessionNotFoundException,
+  CenterNotFoundException,
+  InvalidCredentialsException,
+  AccountDeactivatedException,
+  TelegramAccountNoPasswordException,
+  InvalidTokenException,
+  UserNotFoundException,
+  SmsRateLimitExceededException,
+} from '../../common/exceptions/custom-exceptions';
 
 @Injectable()
 export class AuthService {
@@ -35,11 +45,11 @@ export class AuthService {
     });
 
     if (existingUser) {
-      throw new ConflictException('User with this phone number already exists');
+      throw new PhoneNumberAlreadyExistsException();
     }
 
     // Generate SMS code (fixed 111111 for testing or random)
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
 
     // Send SMS via Eskiz
     try {
@@ -88,7 +98,7 @@ export class AuthService {
     });
 
     if (!verification) {
-      throw new NotFoundException('Verification session not found');
+      throw new VerificationSessionNotFoundException();
     }
 
     if (verification.code !== code) {
@@ -97,11 +107,11 @@ export class AuthService {
         where: { id: verification.id },
         data: { attempts: { increment: 1 } },
       });
-      throw new BadRequestException('Invalid SMS code');
+      throw new InvalidSmsCodeException();
     }
 
     if (new Date() > verification.expiresAt) {
-      throw new BadRequestException('SMS code expired');
+      throw new ExpiredSmsCodeException();
     }
 
     const payload = verification.payload as unknown as RegisterCenterDto;
@@ -176,7 +186,7 @@ export class AuthService {
     });
 
     if (existingUser) {
-      throw new ConflictException('User with this phone number already exists');
+      throw new PhoneNumberAlreadyExistsException();
     }
 
     // Check if center exists
@@ -185,7 +195,7 @@ export class AuthService {
     });
 
     if (!center) {
-      throw new BadRequestException('Center not found');
+      throw new CenterNotFoundException();
     }
 
     // Hash password
@@ -246,26 +256,24 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new InvalidCredentialsException();
     }
 
     // Check if user is active
     if (!user.isActive) {
-      throw new UnauthorizedException('User account is deactivated');
+      throw new AccountDeactivatedException();
     }
 
     // Check if password exists (Telegram-only users don't have passwords)
     if (!user.password) {
-      throw new UnauthorizedException(
-        'This account was created via Telegram. Please use Telegram to login or set a password first.',
-      );
+      throw new TelegramAccountNoPasswordException();
     }
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new InvalidCredentialsException();
     }
 
     // Generate tokens
@@ -302,7 +310,7 @@ export class AuthService {
       });
 
       if (!storedToken) {
-        throw new UnauthorizedException('Invalid refresh token');
+        throw new InvalidTokenException('Invalid refresh token');
       }
 
       // Check if token is expired
@@ -310,7 +318,7 @@ export class AuthService {
         await this.prisma.refreshToken.delete({
           where: { id: storedToken.id },
         });
-        throw new UnauthorizedException('Refresh token expired');
+        throw new InvalidTokenException('Refresh token expired');
       }
 
       // Generate new tokens
@@ -330,7 +338,7 @@ export class AuthService {
 
       return tokens;
     } catch (error) {
-      throw new UnauthorizedException('Invalid refresh token');
+      throw new InvalidTokenException('Invalid refresh token');
     }
   }
 
@@ -343,6 +351,228 @@ export class AuthService {
     });
 
     return { message: 'Logged out successfully' };
+  }
+
+  /**
+   * Forgot Password Flow - Step 1: Send SMS code
+   */
+  async forgotPasswordInit(forgotPasswordInitDto: ForgotPasswordInitDto) {
+    const { phoneNumber } = forgotPasswordInitDto;
+
+    // Check if user exists
+    const existingUser = await this.prisma.user.findUnique({
+      where: { phoneNumber },
+    });
+
+    if (!existingUser) {
+      throw new UserNotFoundException(
+        'Ushbu telefon raqam bilan foydalanuvchi topilmadi',
+      );
+    }
+
+    // Check if user has password (not Telegram-only account)
+    if (!existingUser.password) {
+      throw new TelegramAccountNoPasswordException(
+        "Bu akkaunt Telegram orqali yaratilgan. Parolni o'zgartirish uchun avval parol o'rnating.",
+      );
+    }
+
+    // Generate SMS code (4 digits)
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+    // Send SMS via Eskiz
+    try {
+      await this.eskizService.sendSms(
+        phoneNumber,
+        `Kodni hech kimga bermang! Groop tizimida parolni tiklash uchun tasdiqlash kodi: ${code}`,
+      );
+    } catch (error) {
+      // Fallback to console log if SMS fails (for dev environment)
+      console.error('Failed to send SMS via Eskiz:', error.message);
+      console.log(`SMS Code for ${phoneNumber}: ${code}`);
+    }
+
+    // Save verification data
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 5); // 5 minutes expiration
+
+    await this.prisma.smsVerification.upsert({
+      where: { phoneNumber },
+      update: {
+        code,
+        payload: { type: 'forgot-password', phoneNumber },
+        expiresAt,
+        attempts: 0,
+      },
+      create: {
+        phoneNumber,
+        code,
+        payload: { type: 'forgot-password', phoneNumber },
+        expiresAt,
+      },
+    });
+
+    return {
+      message: 'SMS kod yuborildi',
+      phoneNumber,
+    };
+  }
+
+  /**
+   * Forgot Password Flow - Step 1.5: Resend SMS code
+   */
+  async resendForgotPasswordSms(forgotPasswordInitDto: ForgotPasswordInitDto) {
+    const { phoneNumber } = forgotPasswordInitDto;
+
+    // Find verification record
+    const verification = await this.prisma.smsVerification.findUnique({
+      where: { phoneNumber },
+    });
+
+    if (!verification) {
+      throw new VerificationSessionNotFoundException(
+        "Tasdiqlash sessiyasi topilmadi. Iltimos, qaytadan urinib ko'ring.",
+      );
+    }
+
+    // Check rate limit (1 minute)
+    const now = new Date();
+    const lastUpdated = new Date(verification.updatedAt);
+    const timeDiff = now.getTime() - lastUpdated.getTime();
+    const cooldown = 60 * 1000; // 60 seconds
+
+    if (timeDiff < cooldown) {
+      const remainingSeconds = Math.ceil((cooldown - timeDiff) / 1000);
+      throw new SmsRateLimitExceededException(
+        `Iltimos, ${remainingSeconds} soniyadan so'ng qayta urinib ko'ring`,
+      );
+    }
+
+    // Generate new SMS code
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+    // Send SMS via Eskiz
+    try {
+      await this.eskizService.sendSms(
+        phoneNumber,
+        `Kodni hech kimga bermang! Groop tizimida parolni tiklash uchun tasdiqlash kodi: ${code}`,
+      );
+    } catch (error) {
+      console.error('Failed to send SMS via Eskiz:', error.message);
+      console.log(`SMS Code for ${phoneNumber}: ${code}`);
+    }
+
+    // Update verification record
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 5);
+
+    await this.prisma.smsVerification.update({
+      where: { id: verification.id },
+      data: {
+        code,
+        expiresAt,
+        attempts: 0,
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      message: 'SMS kod qayta yuborildi',
+      phoneNumber,
+    };
+  }
+
+  /**
+   * Forgot Password Flow - Step 2: Verify SMS code
+   */
+  async forgotPasswordVerify(forgotPasswordVerifyDto: ForgotPasswordVerifyDto) {
+    const { phoneNumber, code } = forgotPasswordVerifyDto;
+
+    // Find verification record
+    const verification = await this.prisma.smsVerification.findUnique({
+      where: { phoneNumber },
+    });
+
+    if (!verification) {
+      throw new VerificationSessionNotFoundException(
+        'Tasdiqlash sessiyasi topilmadi',
+      );
+    }
+
+    // Check if code matches
+    if (verification.code !== code) {
+      // Increment attempts
+      await this.prisma.smsVerification.update({
+        where: { id: verification.id },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new InvalidSmsCodeException("Tasdiqlash kodi noto'g'ri");
+    }
+
+    // Check if code is expired
+    if (new Date() > verification.expiresAt) {
+      throw new ExpiredSmsCodeException('Tasdiqlash kodi muddati tugagan');
+    }
+
+    return {
+      message: 'Tasdiqlash muvaffaqiyatli',
+      phoneNumber,
+    };
+  }
+
+  /**
+   * Forgot Password Flow - Step 3: Reset password
+   */
+  async resetPassword(resetPasswordDto: ResetPasswordDto) {
+    const { phoneNumber, code, newPassword } = resetPasswordDto;
+
+    // Find verification record
+    const verification = await this.prisma.smsVerification.findUnique({
+      where: { phoneNumber },
+    });
+
+    if (!verification) {
+      throw new VerificationSessionNotFoundException(
+        'Tasdiqlash sessiyasi topilmadi',
+      );
+    }
+
+    // Verify code again for security
+    if (verification.code !== code) {
+      throw new InvalidSmsCodeException("Tasdiqlash kodi noto'g'ri");
+    }
+
+    // Check if code is expired
+    if (new Date() > verification.expiresAt) {
+      throw new ExpiredSmsCodeException('Tasdiqlash kodi muddati tugagan');
+    }
+
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { phoneNumber },
+    });
+
+    if (!user) {
+      throw new UserNotFoundException('Foydalanuvchi topilmadi');
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update user password
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword },
+    });
+
+    // Delete verification record
+    await this.prisma.smsVerification.delete({
+      where: { id: verification.id },
+    });
+
+    return {
+      message: 'Parol muvaffaqiyatli yangilandi',
+    };
   }
 
   async validateUser(userId: number) {
