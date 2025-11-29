@@ -64,6 +64,7 @@ model User {
   
   // Telegram integration (optional link)
   telegramUserId Int?     @unique
+  botLinkToken   String?  @unique  // One-time token for bot linking
   
   // Soft delete
   isDeleted     Boolean   @default(false)
@@ -80,6 +81,8 @@ model User {
   userRoles      UserRole[]
   refreshTokens  RefreshToken[]
   telegramUser   TelegramUser?   @relation(fields: [telegramUserId], references: [id])
+  teachers       Teacher[]       // Teacher profiles linked to this user
+  students       Student[]       // Student profiles linked to this user
 
   @@index([centerId])
   @@index([activeCenterId])
@@ -425,13 +428,11 @@ model UserCenter {
 model Teacher {
   id          Int      @id @default(autoincrement())
   centerId    Int
-  userId      Int?     // Optional link to User table
+  userId      Int      // Required link to User table (for Telegram notifications)
   
-  // Teacher information
-  firstName   String
-  lastName    String
-  phoneNumber String
-  email       String?
+  // Teacher information (denormalized from User for performance)
+  firstName   String?
+  lastName    String?
   specialty   String?  // Mutaxassisligi
   bio         String?  @db.Text
   
@@ -446,6 +447,7 @@ model Teacher {
   updatedAt   DateTime @updatedAt
 
   // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   groupTeachers GroupTeacher[]
 
   @@index([centerId])
@@ -458,14 +460,11 @@ model Teacher {
 model Student {
   id          Int      @id @default(autoincrement())
   centerId    Int
-  userId      Int?     // Optional link to User table
+  userId      Int      // Required link to User table (added via Telegram)
   
-  // Student information
-  firstName   String
-  lastName    String
-  phoneNumber String
-  email       String?
-  telegramUsername String?
+  // Student information (denormalized from User for performance)
+  firstName   String?
+  lastName    String?
   
   // Status
   isActive    Boolean  @default(true)
@@ -478,14 +477,14 @@ model Student {
   updatedAt   DateTime @updatedAt
 
   // Relations
-  groupStudents    GroupStudent[]
-  payments         Payment[]
-  freezeRequests   StudentFreeze[]
-  refundRequests   RefundRequest[]
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrollments    Enrollment[]
+  payments       Payment[]
+  freezeRequests StudentFreeze[]
+  refundRequests RefundRequest[]
 
   @@index([centerId])
   @@index([userId])
-  @@index([phoneNumber])
   @@index([isDeleted])
   @@map("students")
 }
@@ -498,7 +497,7 @@ model Group {
   // Group information
   name            String
   description     String?  @db.Text
-  monthlyFee      Decimal  @db.Decimal(10, 2)  // Oylik to'lov
+  monthlyPrice    Decimal  @db.Decimal(10, 2)  // Base monthly price
   
   // Course dates
   courseStartDate DateTime
@@ -509,10 +508,6 @@ model Group {
   
   // For LESSON_BASED payment type
   lessonsPerPaymentPeriod Int?  // Bir to'lov davridagi darslar soni
-  
-  // Discount for upfront payment
-  hasUpfrontDiscount Boolean @default(false)
-  upfrontDiscountPercent Decimal? @db.Decimal(5, 2)  // Masalan: 10.00 = 10%
   
   // Join link
   joinLink        String   @unique  // Telegram orqali ulashish uchun link
@@ -529,7 +524,8 @@ model Group {
 
   // Relations
   groupTeachers   GroupTeacher[]
-  groupStudents   GroupStudent[]
+  groupDiscounts  GroupDiscount[]  // Multi-month discount configurations
+  enrollments     Enrollment[]
   lessonSchedules LessonSchedule[]
   payments        Payment[]
 
@@ -583,26 +579,62 @@ model LessonSchedule {
   @@map("lesson_schedules")
 }
 
-// GroupStudent - Talaba guruhga qo'shilishi
-model GroupStudent {
+// GroupDiscount - Multi-month upfront payment discounts
+model GroupDiscount {
+  id             Int      @id @default(autoincrement())
+  groupId        Int
+  
+  // Discount configuration
+  months         Int      // Number of months (e.g., 2, 3, 6)
+  discountAmount Decimal  @db.Decimal(10, 2)  // Fixed discount amount (e.g., 200000 UZS)
+  
+  // Soft delete
+  isDeleted      Boolean  @default(false)
+  deletedAt      DateTime?
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, months])
+  @@index([groupId])
+  @@index([isDeleted])
+  @@map("group_discounts")
+}
+
+// Enrollment - Student enrollment in a group with balance and pricing tracking
+model Enrollment {
   id              Int      @id @default(autoincrement())
   groupId         Int
   studentId       Int
   
   // Enrollment information
   joinedAt        DateTime @default(now())
-  enrollmentDate  DateTime @default(now())  // Qachon guruhga qo'shilgan
   
   // Status
-  status          GroupStudentStatus @default(ACTIVE)  // ACTIVE, FROZEN, REMOVED, COMPLETED
+  status          EnrollmentStatus @default(ACTIVE)  // ACTIVE, FROZEN, EXPELLED, COMPLETED, DROPPED
+  
+  // Balance tracking
+  balance         Decimal  @db.Decimal(10, 2) @default(0.00)  // Positive = overpaid, Negative = debt
+  
+  // Discount configuration (individual student discount - FIXED AMOUNT)
+  individualDiscountAmount Decimal @db.Decimal(10, 2) @default(0.00)  // Fixed discount amount per month (e.g., 50000 UZS)
+  
+  // Per-lesson pricing (effective price after discounts)
+  perLessonPrice  Decimal  @db.Decimal(10, 2)  // Current effective price per lesson
+  
+  // Discount validity (for multi-month prepaid or temporary discounts)
+  discountValidUntil DateTime?  // When the special discount expires
   
   // Payment tracking
   lastPaymentDate DateTime?
   nextPaymentDate DateTime?
   
-  // Upfront payment
-  paidUpfront     Boolean  @default(false)  // To'liq to'lagan
-  upfrontMonths   Int?     // Necha oylik to'lagan
+  // Upfront payment tracking
+  paidUpfrontMonths Int?     // Number of months paid upfront
+  upfrontValidUntil DateTime? // When upfront payment period ends
   
   // Removal tracking
   removedAt       DateTime?
@@ -624,9 +656,11 @@ model GroupStudent {
   @@index([groupId])
   @@index([studentId])
   @@index([status])
+  @@index([balance])
   @@index([nextPaymentDate])
+  @@index([discountValidUntil])
   @@index([isDeleted])
-  @@map("group_students")
+  @@map("enrollments")
 }
 
 // Payment - To'lovlar
@@ -635,18 +669,18 @@ model Payment {
   centerId        Int
   groupId         Int
   studentId       Int
-  groupStudentId  Int?     // Link to GroupStudent
+  enrollmentId    Int?     // Link to Enrollment
   
   // Payment information
   amount          Decimal  @db.Decimal(10, 2)
   currency        String   @default("UZS")
   
-  // Payment period
-  periodStart     DateTime
-  periodEnd       DateTime
+  // Payment period (recommended for tracking coverage)
+  periodStart     DateTime?
+  periodEnd       DateTime?
   
   // Payment type for this specific payment
-  paymentType     PaymentType
+  paymentType     PaymentType?
   
   // For LESSON_BASED payments
   lessonsIncluded Int?     // Bu to'lovga nechta dars kiradi
@@ -656,11 +690,11 @@ model Payment {
   status          PaymentStatus @default(PENDING)  // PENDING, PAID, OVERDUE, CANCELLED, REFUNDED
   
   // Payment dates
-  dueDate         DateTime
+  dueDate         DateTime?
   paidAt          DateTime?
   
   // Payment method
-  paymentMethod   String?  // CASH, CARD, BANK_TRANSFER, etc.
+  paymentMethod   String?  // CASH, CARD, CLICK, PAYME, etc.
   
   // Notification tracking
   notificationSent Boolean  @default(false)
@@ -688,8 +722,11 @@ model Payment {
   @@index([centerId])
   @@index([groupId])
   @@index([studentId])
+  @@index([enrollmentId])
   @@index([status])
   @@index([dueDate])
+  @@index([periodStart])
+  @@index([periodEnd])
   @@index([isDeleted])
   @@map("payments")
 }
@@ -697,7 +734,7 @@ model Payment {
 // StudentFreeze - Talabani muzlatish
 model StudentFreeze {
   id              Int      @id @default(autoincrement())
-  groupStudentId  Int
+  enrollmentId    Int
   studentId       Int
   
   // Freeze information
@@ -720,10 +757,10 @@ model StudentFreeze {
   updatedAt       DateTime @updatedAt
 
   // Relations
-  groupStudent GroupStudent @relation(fields: [groupStudentId], references: [id], onDelete: Cascade)
-  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  student    Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@index([groupStudentId])
+  @@index([enrollmentId])
   @@index([studentId])
   @@index([status])
   @@index([freezeStartDate])
@@ -871,11 +908,12 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
-enum GroupStudentStatus {
+enum EnrollmentStatus {
   ACTIVE
   FROZEN
-  REMOVED
+  EXPELLED
   COMPLETED
+  DROPPED
 }
 
 enum FreezeStatus {

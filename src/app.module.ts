@@ -15,6 +15,7 @@ import { CenterBotModule } from './modules/center-bot/center-bot.module';
 import { PlanModule } from './modules/plan/plan.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { PaymentCardModule } from './modules/payment-card/payment-card.module';
+import { TeachersModule } from './modules/teachers/teachers.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PaymentCardModule } from './modules/payment-card/payment-card.module';
     PlanModule,
     SubscriptionModule,
     PaymentCardModule,
+    TeachersModule,
   ],
   controllers: [AppController],
   providers: [

@@ -460,11 +460,22 @@ export class TelegramService {
     telegramUser: TelegramUserWithUser,
     param?: string,
   ) {
-    // Parse start parameter (e.g., /start course_ABC123)
-    if (param && param.startsWith('course_')) {
-      const courseToken = param.replace('course_', '');
-      await this.handleCourseEnrollment(bot, telegramUser, courseToken);
-      return;
+    // Parse start parameter (e.g., /start course_ABC123 or /start UUID)
+    if (param) {
+      if (param.startsWith('course_')) {
+        const courseToken = param.replace('course_', '');
+        await this.handleCourseEnrollment(bot, telegramUser, courseToken);
+        return;
+      }
+
+      // Check if it's a teacher linking token (UUID)
+      // UUID regex: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(param)) {
+        await this.handleTeacherLinking(bot, telegramUser, param);
+        return;
+      }
     }
 
     // Default welcome message
@@ -477,6 +488,87 @@ export class TelegramService {
       bot,
       telegramUser.chatId || '',
       welcomeMessage,
+    );
+  }
+
+  /**
+   * Handle teacher linking via deep link
+   */
+  private async handleTeacherLinking(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    token: string,
+  ) {
+    this.logger.log(
+      `Handling teacher linking for token ${token} and telegram user ${telegramUser.id}`,
+    );
+
+    // Find user with this token
+    const targetUser = await this.prisma.user.findUnique({
+      where: { botLinkToken: token },
+      include: { teachers: true }, // Include teachers relation (it's an array)
+    });
+
+    if (!targetUser) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Havola eskirgan yoki noto'g'ri.",
+      );
+      return;
+    }
+
+    // Check if user is already linked to THIS telegram user
+    if (targetUser.telegramUserId === telegramUser.id) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '✅ Siz allaqachon ushbu profilga ulangansiz.',
+      );
+      return;
+    }
+
+    // Link telegram user to this user
+    await this.prisma.$transaction(async (tx) => {
+      // 1. If telegramUser is already linked to another user, unlink it
+      // (This handles the case where a student account was auto-created)
+      if (telegramUser.user && telegramUser.user.id !== targetUser.id) {
+        await tx.user.update({
+          where: { id: telegramUser.user.id },
+          data: { telegramUserId: null },
+        });
+        this.logger.log(
+          `Unlinked TelegramUser ${telegramUser.id} from old User ${telegramUser.user.id}`,
+        );
+      }
+
+      // 2. Update target user: clear token, set telegramUserId
+      await tx.user.update({
+        where: { id: targetUser.id },
+        data: {
+          botLinkToken: null, // Clear token (one-time use)
+          telegramUserId: telegramUser.id,
+          authProvider: 'telegram', // Switch to telegram auth
+          isActive: true, // Ensure active
+        },
+      });
+
+      // 3. Update TelegramUser profile with Teacher's name if needed
+      await tx.telegramUser.update({
+        where: { id: telegramUser.id },
+        data: {
+          firstName: targetUser.firstName || telegramUser.firstName,
+          lastName: targetUser.lastName || telegramUser.lastName,
+          phoneNumber: targetUser.phoneNumber || telegramUser.phoneNumber,
+        },
+      });
+    });
+
+    await this.sendMessageToUser(
+      bot,
+      telegramUser.chatId || '',
+      `✅ Muvaffaqiyatli ulandi!\n\n` +
+        `Hurmatli ${targetUser.firstName} ${targetUser.lastName}, sizning Telegram hisobingiz o'qituvchi profilingizga ulandi.`,
     );
   }
 
