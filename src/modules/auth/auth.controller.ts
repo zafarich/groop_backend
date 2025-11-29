@@ -6,6 +6,7 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Get,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import {
@@ -17,6 +18,7 @@ import {
   ForgotPasswordInitDto,
   ForgotPasswordVerifyDto,
   ResetPasswordDto,
+  SetActiveCenterDto,
 } from './dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
@@ -103,6 +105,27 @@ export class AuthController {
   @Post('me')
   @HttpCode(HttpStatus.OK)
   async getProfile(@Request() req) {
+    // User already includes roles and permissions from validateUser in JWT strategy
     return req.user;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('set-active-center')
+  @HttpCode(HttpStatus.OK)
+  async setActiveCenter(
+    @Request() req,
+    @Body() setActiveCenterDto: SetActiveCenterDto,
+  ) {
+    return this.authService.setActiveCenter(
+      req.user.id,
+      setActiveCenterDto.centerId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('my-centers')
+  @HttpCode(HttpStatus.OK)
+  async getUserCenters(@Request() req) {
+    return this.authService.getUserCenters(req.user.id);
   }
 }

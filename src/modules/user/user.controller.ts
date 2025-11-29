@@ -7,7 +7,6 @@ import {
   Param,
   Delete,
   UseGuards,
-  Query,
   ParseIntPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
@@ -16,6 +15,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ActiveCenterId } from '../../common/decorators/active-center.decorator';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -30,8 +30,8 @@ export class UserController {
 
   @Get()
   @RequirePermissions('user.read')
-  findAll(@Query('centerId', new ParseIntPipe({ optional: true })) centerId?: number) {
-    return this.userService.findAll(centerId);
+  findAll(@ActiveCenterId() activeCenterId: number) {
+    return this.userService.findAll(activeCenterId);
   }
 
   @Get('me')
@@ -47,7 +47,10 @@ export class UserController {
 
   @Patch(':id')
   @RequirePermissions('user.update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() updateUserDto: UpdateUserDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateUserDto: UpdateUserDto,
+  ) {
     return this.userService.update(id, updateUserDto);
   }
 
@@ -59,14 +62,19 @@ export class UserController {
 
   @Post(':id/roles')
   @RequirePermissions('user.assign-role')
-  assignRole(@Param('id', ParseIntPipe) id: number, @Body() assignRoleDto: AssignRoleDto) {
+  assignRole(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() assignRoleDto: AssignRoleDto,
+  ) {
     return this.userService.assignRole(id, assignRoleDto);
   }
 
   @Delete(':id/roles/:roleId')
   @RequirePermissions('user.remove-role')
-  removeRole(@Param('id', ParseIntPipe) id: number, @Param('roleId', ParseIntPipe) roleId: number) {
+  removeRole(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('roleId', ParseIntPipe) roleId: number,
+  ) {
     return this.userService.removeRole(id, roleId);
   }
 }
-

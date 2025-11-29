@@ -1,10 +1,4 @@
-import {
-  IsNotEmpty,
-  IsString,
-  Matches,
-  MinLength,
-  IsOptional,
-} from 'class-validator';
+import { IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
 
 export class RegisterCenterDto {
   @IsString()

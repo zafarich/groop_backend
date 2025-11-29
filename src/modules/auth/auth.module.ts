@@ -17,6 +17,7 @@ import { EskizModule } from '../eskiz/eskiz.module';
     }),
     EskizModule,
   ],
+
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
   exports: [AuthService],

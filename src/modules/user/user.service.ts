@@ -1,7 +1,13 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateUserDto, UpdateUserDto, AssignRoleDto } from './dto';
 import * as bcrypt from 'bcrypt';
+import { UserType } from '@prisma/client';
 
 @Injectable()
 export class UserService {
@@ -31,7 +37,14 @@ export class UserService {
         username,
         password: hashedPassword,
         centerId,
+        activeCenterId: centerId,
         ...rest,
+        userCenters: {
+          create: {
+            centerId,
+            role: rest.userType || UserType.STUDENT,
+          },
+        },
       },
       include: {
         center: true,
@@ -47,11 +60,37 @@ export class UserService {
     return this.sanitizeUser(user);
   }
 
-  async findAll(centerId?: number) {
-    const where = centerId ? { centerId } : {};
+  async findAll(activeCenterId?: number) {
+    // If activeCenterId is provided, filter by it.
+    // We search in UserCenter to find users belonging to this center
+    if (activeCenterId) {
+      const userCenters = await this.prisma.userCenter.findMany({
+        where: {
+          centerId: activeCenterId,
+          isDeleted: false,
+        },
+        include: {
+          user: {
+            include: {
+              center: true,
+              userRoles: {
+                include: {
+                  role: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
 
+      return userCenters.map((uc) => this.sanitizeUser(uc.user));
+    }
+
+    // If no activeCenterId (e.g. superadmin), return all users
     const users = await this.prisma.user.findMany({
-      where,
       include: {
         center: true,
         userRoles: {
@@ -95,8 +134,6 @@ export class UserService {
 
     return this.sanitizeUser(user);
   }
-
-
 
   async update(id: number, updateUserDto: UpdateUserDto) {
     const user = await this.prisma.user.findUnique({
@@ -217,4 +254,3 @@ export class UserService {
     return sanitized;
   }
 }
-

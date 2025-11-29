@@ -8,3 +8,4 @@ export * from './verify-sms.dto';
 export * from './forgot-password-init.dto';
 export * from './forgot-password-verify.dto';
 export * from './reset-password.dto';
+export * from './set-active-center.dto';

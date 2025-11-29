@@ -12,7 +12,7 @@ import {
   ResetPasswordDto,
 } from './dto';
 import * as bcrypt from 'bcrypt';
-import { UserType } from '@prisma/client';
+import { User, UserType } from '@prisma/client';
 import { EskizService } from '../eskiz/eskiz.service';
 import {
   PhoneNumberAlreadyExistsException,
@@ -132,7 +132,78 @@ export class AuthService {
         },
       });
 
-      // 2. Create User (Owner)
+      // 2. Get all permissions to assign to roles
+      const allPermissions = await prisma.permission.findMany({
+        where: { isDeleted: false },
+      });
+
+      // 3. Create default roles for this center
+      const adminRole = await prisma.role.create({
+        data: {
+          name: 'Admin',
+          slug: 'admin',
+          description: 'Administrator with full access',
+          centerId: center.id,
+          isSystem: true,
+        },
+      });
+
+      const teacherRole = await prisma.role.create({
+        data: {
+          name: 'Teacher',
+          slug: 'teacher',
+          description: 'Teacher with limited access',
+          centerId: center.id,
+          isSystem: true,
+        },
+      });
+
+      const studentRole = await prisma.role.create({
+        data: {
+          name: 'Student',
+          slug: 'student',
+          description: 'Student with basic access',
+          centerId: center.id,
+          isSystem: true,
+        },
+      });
+
+      // 4. Assign all permissions to Admin role
+      const adminPermissions = allPermissions.map((permission) => ({
+        roleId: adminRole.id,
+        permissionId: permission.id,
+      }));
+      await prisma.rolePermission.createMany({
+        data: adminPermissions,
+      });
+
+      // 5. Assign read permissions to Teacher role (user.read, center.read, etc.)
+      const teacherPermissions = allPermissions
+        .filter((p) => p.action === 'read' || p.slug.includes('teacher'))
+        .map((permission) => ({
+          roleId: teacherRole.id,
+          permissionId: permission.id,
+        }));
+      if (teacherPermissions.length > 0) {
+        await prisma.rolePermission.createMany({
+          data: teacherPermissions,
+        });
+      }
+
+      // 6. Assign minimal permissions to Student role
+      const studentPermissions = allPermissions
+        .filter((p) => p.slug.includes('student') || p.slug === 'center.read')
+        .map((permission) => ({
+          roleId: studentRole.id,
+          permissionId: permission.id,
+        }));
+      if (studentPermissions.length > 0) {
+        await prisma.rolePermission.createMany({
+          data: studentPermissions,
+        });
+      }
+
+      // 7. Create User (Owner)
       const hashedPassword = await bcrypt.hash(payload.password, 10);
 
       const user = await prisma.user.create({
@@ -142,11 +213,29 @@ export class AuthService {
           lastName: payload.lastName,
           password: hashedPassword,
           centerId: center.id,
+          activeCenterId: center.id,
           userType: UserType.ADMIN,
         },
       });
 
-      // 3. Update Center owner
+      // 8. Create UserCenter
+      await prisma.userCenter.create({
+        data: {
+          userId: user.id,
+          centerId: center.id,
+          role: UserType.ADMIN,
+        },
+      });
+
+      // 9. Assign Admin role to the owner
+      await prisma.userRole.create({
+        data: {
+          userId: user.id,
+          roleId: adminRole.id,
+        },
+      });
+
+      // 10. Update Center owner
       await prisma.center.update({
         where: { id: center.id },
         data: { ownerUserId: user.id },
@@ -160,18 +249,39 @@ export class AuthService {
       where: { id: verification.id },
     });
 
+    // Fetch user with roles and permissions
+    const userWithRoles = await this.prisma.user.findUnique({
+      where: { id: result.user.id },
+      include: {
+        center: true,
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                rolePermissions: {
+                  include: {
+                    permission: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
     // Generate tokens
     const tokens = await this.generateTokens(
       result.user.id,
       result.user.phoneNumber,
-      result.user.centerId,
+      result.user.activeCenterId,
     );
 
     // Save refresh token
     await this.saveRefreshToken(result.user.id, tokens.refreshToken);
 
     return {
-      user: this.sanitizeUser(result.user),
+      user: this.sanitizeUser(userWithRoles),
       center: result.center,
       ...tokens,
     };
@@ -208,7 +318,14 @@ export class AuthService {
         username,
         password: hashedPassword,
         centerId,
+        activeCenterId: centerId, // Set active center initially
         ...rest,
+        userCenters: {
+          create: {
+            centerId,
+            role: rest?.userType || UserType.STUDENT,
+          },
+        },
       },
       include: {
         center: true,
@@ -219,7 +336,7 @@ export class AuthService {
     const tokens = await this.generateTokens(
       user.id,
       user.phoneNumber,
-      user.centerId,
+      user.activeCenterId,
     );
 
     // Save refresh token
@@ -276,18 +393,81 @@ export class AuthService {
       throw new InvalidCredentialsException();
     }
 
+    // Get user centers
+    const userCenters = await this.prisma.userCenter.findMany({
+      where: {
+        userId: user.id,
+        isActive: true,
+        isDeleted: false,
+      },
+      include: {
+        center: true,
+      },
+    });
+
+    // If user has no centers (should not happen for normal users, but maybe for superadmin)
+    if (userCenters.length === 0 && user.userType !== UserType.ADMIN) {
+      // Fallback to centerId if no userCenters found (migration support)
+      if (user.centerId) {
+        await this.prisma.userCenter.create({
+          data: {
+            userId: user.id,
+            centerId: user.centerId,
+            role: user.userType,
+          },
+        });
+        // Re-fetch
+        return this.login(loginDto);
+      }
+    }
+
+    let activeCenterId = user.activeCenterId;
+
+    // If user has multiple centers and no active center is set, or we want to force selection
+    // For now, if activeCenterId is set, we use it. If not, we check count.
+
+    // Logic:
+    // 1. If user has > 1 center, we return list of centers and require selection
+    // 2. If user has 1 center, we automatically set it as active
+
+    if (userCenters.length > 1) {
+      return {
+        user: this.sanitizeUser(user),
+        requiresCenterSelection: true,
+        centers: userCenters.map((uc) => ({
+          id: uc.center.id,
+          name: uc.center.name,
+          role: uc.role,
+        })),
+        message: 'Please select a center',
+      };
+    } else if (userCenters.length === 1) {
+      // Auto-set active center if not set or different
+      const centerId = userCenters[0].centerId;
+      if (activeCenterId !== centerId) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { activeCenterId: centerId },
+        });
+        activeCenterId = centerId;
+      }
+    }
+
     // Generate tokens
     const tokens = await this.generateTokens(
       user.id,
       user.phoneNumber,
-      user.centerId,
+      activeCenterId || user.centerId, // Fallback to centerId
     );
 
     // Save refresh token
     await this.saveRefreshToken(user.id, tokens.refreshToken);
 
     return {
-      user: this.sanitizeUser(user),
+      user: {
+        ...this.sanitizeUser(user),
+        activeCenterId,
+      },
       ...tokens,
     };
   }
@@ -296,11 +476,6 @@ export class AuthService {
     const { refreshToken } = refreshTokenDto;
 
     try {
-      // Verify refresh token
-      const payload = this.jwtService.verify(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET,
-      });
-
       // Check if refresh token exists in database
       const storedToken = await this.prisma.refreshToken.findUnique({
         where: { token: refreshToken },
@@ -325,7 +500,7 @@ export class AuthService {
       const tokens = await this.generateTokens(
         storedToken.user.id,
         storedToken.user.phoneNumber,
-        storedToken.user.centerId,
+        storedToken.user.activeCenterId || storedToken.user.centerId,
       );
 
       // Delete old refresh token
@@ -337,7 +512,7 @@ export class AuthService {
       await this.saveRefreshToken(storedToken.user.id, tokens.refreshToken);
 
       return tokens;
-    } catch (error) {
+    } catch {
       throw new InvalidTokenException('Invalid refresh token');
     }
   }
@@ -388,7 +563,7 @@ export class AuthService {
       );
     } catch (error) {
       // Fallback to console log if SMS fails (for dev environment)
-      console.error('Failed to send SMS via Eskiz:', error.message);
+      console.error('Failed to send SMS via Eskiz:', error?.message);
       console.log(`SMS Code for ${phoneNumber}: ${code}`);
     }
 
@@ -600,15 +775,131 @@ export class AuthService {
       return null;
     }
 
+    // Inject permissions based on active center role
+    if (user.activeCenterId) {
+      const activeUserCenter = await this.prisma.userCenter.findUnique({
+        where: {
+          userId_centerId: {
+            userId: user.id,
+            centerId: user.activeCenterId,
+          },
+        },
+      });
+
+      if (
+        activeUserCenter &&
+        activeUserCenter.isActive &&
+        !activeUserCenter.isDeleted
+      ) {
+        // Map UserType to Role Name
+        let roleName = 'User';
+        if (activeUserCenter.role === UserType.ADMIN) {
+          roleName = 'Admin';
+        } else if (activeUserCenter.role === UserType.TEACHER) {
+          roleName = 'Teacher'; // Assuming Teacher role exists, fallback to User if not found/handled
+        }
+      }
+    }
+
     return user;
+  }
+
+  async getUserCenters(userId: number) {
+    const userCenters = await this.prisma.userCenter.findMany({
+      where: {
+        userId,
+        isActive: true,
+        isDeleted: false,
+      },
+      include: {
+        center: true,
+      },
+    });
+
+    return userCenters.map((uc) => ({
+      id: uc.center.id,
+      name: uc.center.name,
+      slug: uc.center.slug,
+      role: uc.role,
+      joinedAt: uc.createdAt,
+    }));
+  }
+
+  async getUserProfile(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        center: true,
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                rolePermissions: {
+                  include: {
+                    permission: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new UserNotFoundException('User not found');
+    }
+
+    return this.sanitizeUser(user);
+  }
+
+  async setActiveCenter(userId: number, centerId: number) {
+    // Verify user belongs to this center
+    const userCenter = await this.prisma.userCenter.findUnique({
+      where: {
+        userId_centerId: {
+          userId,
+          centerId,
+        },
+      },
+    });
+
+    if (!userCenter || !userCenter.isActive || userCenter.isDeleted) {
+      throw new CenterNotFoundException('User does not belong to this center');
+    }
+
+    // Update user's active center
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { activeCenterId: centerId },
+    });
+
+    // Generate new tokens with updated activeCenterId
+    const tokens = await this.generateTokens(
+      user.id,
+      user.phoneNumber,
+      centerId,
+    );
+
+    // Save refresh token (optional: invalidate old ones or keep them)
+    await this.saveRefreshToken(user.id, tokens.refreshToken);
+
+    return {
+      message: 'Active center updated',
+      user: {
+        ...this.sanitizeUser(user),
+        activeCenterId: centerId,
+      },
+      ...tokens,
+    };
   }
 
   private async generateTokens(
     userId: number,
     phoneNumber: string,
-    centerId: number,
+    activeCenterId: number | null,
   ) {
-    const payload = { sub: userId, phoneNumber, centerId };
+    const payload = { sub: userId, phoneNumber, activeCenterId };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {

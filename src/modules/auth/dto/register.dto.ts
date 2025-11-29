@@ -5,8 +5,10 @@ import {
   IsOptional,
   IsInt,
   Matches,
+  IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { UserType } from '@prisma/client';
 
 export class RegisterDto {
   @IsString()
@@ -37,4 +39,8 @@ export class RegisterDto {
   @IsNotEmpty()
   @Type(() => Number)
   centerId: number;
+
+  @IsOptional()
+  @IsEnum(UserType)
+  userType?: UserType;
 }
