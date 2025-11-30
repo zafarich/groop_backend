@@ -20,10 +20,10 @@ export class CenterBotService {
   ) {}
 
   async create(createCenterBotDto: CreateCenterBotDto, activeCenterId: number) {
-    const { centerId, botToken, ...rest } = createCenterBotDto;
+    const { botToken, ...rest } = createCenterBotDto;
 
     // Use activeCenterId if centerId is not provided in DTO
-    const targetCenterId = centerId || activeCenterId;
+    const targetCenterId = activeCenterId;
 
     // Check if center exists
     const center = await this.prisma.center.findUnique({

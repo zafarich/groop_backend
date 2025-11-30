@@ -8,11 +8,6 @@ import {
 import { Type } from 'class-transformer';
 
 export class CreateCenterBotDto {
-  @IsInt()
-  @IsNotEmpty()
-  @Type(() => Number)
-  centerId: number;
-
   @IsString()
   @IsNotEmpty()
   botToken: string;
