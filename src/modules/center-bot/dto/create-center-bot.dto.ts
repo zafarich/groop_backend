@@ -41,4 +41,3 @@ export class CreateCenterBotDto {
   @IsOptional()
   isActive?: boolean;
 }
-

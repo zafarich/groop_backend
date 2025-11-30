@@ -222,7 +222,12 @@ export class CenterBotService {
     });
 
     if (!bot) {
-      throw new NotFoundException('No bot found for this center');
+      return {
+        success: false,
+        code: 404,
+        data: null,
+        message: 'No bot found for this center',
+      };
     }
 
     // Return bot info with masked sensitive data
