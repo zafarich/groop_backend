@@ -169,6 +169,13 @@ async function main() {
       action: 'delete',
       description: 'Delete centers',
     },
+    {
+      name: 'Manage Center',
+      slug: 'center.manage',
+      module: 'center',
+      action: 'manage',
+      description: 'Manage center settings and configuration',
+    },
 
     // Telegram permissions
     {

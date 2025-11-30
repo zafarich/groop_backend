@@ -44,6 +44,16 @@ export class CenterBotController {
     return this.centerBotService.findByCenterId(activeCenterId);
   }
 
+  @Patch(':id')
+  @RequirePermissions('center.manage', 'telegram.manage')
+  @CheckCenterOwnership({ resourceName: 'center-bot' })
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateCenterBotDto: UpdateCenterBotDto,
+  ) {
+    return this.centerBotService.update(id, updateCenterBotDto);
+  }
+
   @Get(':id')
   @RequirePermissions('center.read')
   @CheckCenterOwnership({ resourceName: 'center-bot' })
@@ -63,16 +73,6 @@ export class CenterBotController {
   @CheckCenterOwnership({ resourceName: 'center-bot' })
   resetWebhook(@Param('id', ParseIntPipe) id: number) {
     return this.centerBotService.resetWebhook(id);
-  }
-
-  @Patch(':id')
-  @RequirePermissions('center.manage', 'telegram.manage')
-  @CheckCenterOwnership({ resourceName: 'center-bot' })
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() updateCenterBotDto: UpdateCenterBotDto,
-  ) {
-    return this.centerBotService.update(id, updateCenterBotDto);
   }
 
   @Delete(':id')

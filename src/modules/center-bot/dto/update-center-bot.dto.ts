@@ -1,9 +1,4 @@
-import {
-  IsString,
-  IsOptional,
-  IsBoolean,
-  Matches,
-} from 'class-validator';
+import { IsString, IsOptional, IsBoolean, Matches } from 'class-validator';
 
 export class UpdateCenterBotDto {
   @IsString()
@@ -49,4 +44,3 @@ export class UpdateCenterBotDto {
   @IsOptional()
   isActive?: boolean;
 }
-
