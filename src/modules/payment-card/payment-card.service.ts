@@ -21,10 +21,10 @@ export class PaymentCardService {
     createPaymentCardDto: CreatePaymentCardDto,
     activeCenterId: number,
   ) {
-    const { centerId, isPrimary, ...rest } = createPaymentCardDto;
+    const { isPrimary, ...rest } = createPaymentCardDto;
 
     // Use activeCenterId if centerId is not provided in DTO
-    const targetCenterId = centerId || activeCenterId;
+    const targetCenterId = activeCenterId;
 
     // Verify center exists
     const center = await this.prisma.center.findUnique({
