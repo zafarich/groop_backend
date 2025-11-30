@@ -38,17 +38,17 @@ export class CenterBotController {
     return this.centerBotService.findAll(activeCenterId);
   }
 
+  @Get('my-bot')
+  @RequirePermissions('center.read')
+  getMyBot(@ActiveCenterId() activeCenterId: number) {
+    return this.centerBotService.findByCenterId(activeCenterId);
+  }
+
   @Get(':id')
   @RequirePermissions('center.read')
   @CheckCenterOwnership({ resourceName: 'center-bot' })
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.centerBotService.findOne(id);
-  }
-
-  @Get('my-bot')
-  @RequirePermissions('center.read')
-  getMyBot(@ActiveCenterId() activeCenterId: number) {
-    return this.centerBotService.findByCenterId(activeCenterId);
   }
 
   @Get(':id/webhook-info')
