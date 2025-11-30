@@ -58,9 +58,7 @@ export class CenterBotService {
     const botInfo = await this.telegramApi.getMe(botToken);
 
     if (!botInfo.ok) {
-      throw new BadRequestException(
-        `Invalid bot token: ${botInfo.description}`,
-      );
+      throw new BadRequestException(`Bot token xato: ${botInfo.description}`);
     }
 
     // Generate secret token
@@ -255,9 +253,7 @@ export class CenterBotService {
       const botInfo = await this.telegramApi.getMe(updateCenterBotDto.botToken);
 
       if (!botInfo.ok) {
-        throw new BadRequestException(
-          `Invalid bot token: ${botInfo.description}`,
-        );
+        throw new BadRequestException(`Bot token xato: ${botInfo.description}`);
       }
 
       // Check if new token already exists
