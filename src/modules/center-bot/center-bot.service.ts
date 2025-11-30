@@ -19,16 +19,30 @@ export class CenterBotService {
     private telegramApi: TelegramApiService,
   ) {}
 
-  async create(createCenterBotDto: CreateCenterBotDto) {
+  async create(createCenterBotDto: CreateCenterBotDto, activeCenterId: number) {
     const { centerId, botToken, ...rest } = createCenterBotDto;
+
+    // Use activeCenterId if centerId is not provided in DTO
+    const targetCenterId = centerId || activeCenterId;
 
     // Check if center exists
     const center = await this.prisma.center.findUnique({
-      where: { id: centerId },
+      where: { id: targetCenterId },
     });
 
     if (!center) {
       throw new BadRequestException('Center not found');
+    }
+
+    // Check if center already has a bot
+    const existingCenterBot = await this.prisma.centerTelegramBot.findFirst({
+      where: { centerId: targetCenterId },
+    });
+
+    if (existingCenterBot) {
+      throw new ConflictException(
+        'Center already has a telegram bot. Each center can only have one bot.',
+      );
     }
 
     // Check if bot token already exists
@@ -55,7 +69,7 @@ export class CenterBotService {
     // Create bot in database
     const bot = await this.prisma.centerTelegramBot.create({
       data: {
-        centerId,
+        centerId: targetCenterId,
         botToken,
         botUsername: botInfo.result.username,
         secretToken,
@@ -99,11 +113,9 @@ export class CenterBotService {
     return this.findOne(bot.id);
   }
 
-  async findAll(centerId?: number) {
-    const where = centerId ? { centerId } : {};
-
+  async findAll(centerId: number) {
     return this.prisma.centerTelegramBot.findMany({
-      where,
+      where: { centerId },
       include: {
         center: {
           select: {
@@ -167,6 +179,58 @@ export class CenterBotService {
     });
 
     return bot;
+  }
+
+  async findByBotToken(botToken: string) {
+    const bot = await this.prisma.centerTelegramBot.findUnique({
+      where: { botToken },
+      include: {
+        center: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+
+    if (!bot) {
+      throw new NotFoundException('Bot not found');
+    }
+
+    // Return bot info with masked sensitive data
+    return {
+      ...bot,
+      botToken: this.maskToken(bot.botToken),
+      secretToken: this.maskToken(bot.secretToken),
+    };
+  }
+
+  async findByCenterId(centerId: number) {
+    const bot = await this.prisma.centerTelegramBot.findFirst({
+      where: { centerId },
+      include: {
+        center: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+
+    if (!bot) {
+      throw new NotFoundException('No bot found for this center');
+    }
+
+    // Return bot info with masked sensitive data
+    return {
+      ...bot,
+      botToken: this.maskToken(bot.botToken),
+      secretToken: this.maskToken(bot.secretToken),
+    };
   }
 
   async update(id: number, updateCenterBotDto: UpdateCenterBotDto) {

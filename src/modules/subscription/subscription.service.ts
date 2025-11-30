@@ -12,12 +12,18 @@ import { SubscriptionStatus as PrismaSubscriptionStatus } from '@prisma/client';
 export class SubscriptionService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createSubscriptionDto: CreateSubscriptionDto) {
+  async create(
+    createSubscriptionDto: CreateSubscriptionDto,
+    activeCenterId: number,
+  ) {
     const { centerId, planId, ...rest } = createSubscriptionDto;
+
+    // Use activeCenterId if centerId is not provided in DTO
+    const targetCenterId = centerId || activeCenterId;
 
     // Check if center exists
     const center = await this.prisma.center.findUnique({
-      where: { id: centerId },
+      where: { id: targetCenterId },
     });
 
     if (!center) {
@@ -37,27 +43,30 @@ export class SubscriptionService {
     const existingSubscription = await this.prisma.centerSubscription.findFirst(
       {
         where: {
-          centerId,
+          centerId: targetCenterId,
           status: {
-            in: ['ACTIVE' as PrismaSubscriptionStatus, 'TRIAL' as PrismaSubscriptionStatus],
+            in: [
+              'ACTIVE' as PrismaSubscriptionStatus,
+              'TRIAL' as PrismaSubscriptionStatus,
+            ],
           },
         },
       },
     );
 
     if (existingSubscription) {
-      throw new ConflictException(
-        'Center already has an active subscription',
-      );
+      throw new ConflictException('Center already has an active subscription');
     }
 
     return this.prisma.centerSubscription.create({
       data: {
-        centerId,
+        centerId: targetCenterId,
         planId,
         currentPeriodStart: new Date(rest.currentPeriodStart),
         currentPeriodEnd: new Date(rest.currentPeriodEnd),
-        status: rest.status as PrismaSubscriptionStatus || 'ACTIVE' as PrismaSubscriptionStatus,
+        status:
+          (rest.status as PrismaSubscriptionStatus) ||
+          ('ACTIVE' as PrismaSubscriptionStatus),
         cancelAtPeriodEnd: rest.cancelAtPeriodEnd,
         externalCustomerId: rest.externalCustomerId,
         externalSubscriptionId: rest.externalSubscriptionId,
@@ -69,12 +78,8 @@ export class SubscriptionService {
     });
   }
 
-  async findAll(centerId?: number, status?: string) {
-    const where: any = {};
-
-    if (centerId) {
-      where.centerId = centerId;
-    }
+  async findAll(centerId: number, status?: string) {
+    const where: any = { centerId };
 
     if (status) {
       where.status = status;
@@ -139,7 +144,10 @@ export class SubscriptionService {
       where: {
         centerId,
         status: {
-          in: ['ACTIVE' as PrismaSubscriptionStatus, 'TRIAL' as PrismaSubscriptionStatus],
+          in: [
+            'ACTIVE' as PrismaSubscriptionStatus,
+            'TRIAL' as PrismaSubscriptionStatus,
+          ],
         },
       },
       include: {
@@ -201,7 +209,7 @@ export class SubscriptionService {
       throw new NotFoundException('Subscription not found');
     }
 
-    if (subscription.status === 'CANCELED' as PrismaSubscriptionStatus) {
+    if (subscription.status === ('CANCELED' as PrismaSubscriptionStatus)) {
       throw new BadRequestException('Subscription is already canceled');
     }
 
@@ -239,8 +247,10 @@ export class SubscriptionService {
       throw new NotFoundException('Subscription not found');
     }
 
-    if (subscription.status !== 'CANCELED' as PrismaSubscriptionStatus) {
-      throw new BadRequestException('Only canceled subscriptions can be reactivated');
+    if (subscription.status !== ('CANCELED' as PrismaSubscriptionStatus)) {
+      throw new BadRequestException(
+        'Only canceled subscriptions can be reactivated',
+      );
     }
 
     return this.prisma.centerSubscription.update({
@@ -260,18 +270,19 @@ export class SubscriptionService {
     const now = new Date();
 
     // Find expired subscriptions
-    const expiredSubscriptions = await this.prisma.centerSubscription.findMany(
-      {
-        where: {
-          currentPeriodEnd: {
-            lte: now,
-          },
-          status: {
-            in: ['ACTIVE' as PrismaSubscriptionStatus, 'TRIAL' as PrismaSubscriptionStatus],
-          },
+    const expiredSubscriptions = await this.prisma.centerSubscription.findMany({
+      where: {
+        currentPeriodEnd: {
+          lte: now,
+        },
+        status: {
+          in: [
+            'ACTIVE' as PrismaSubscriptionStatus,
+            'TRIAL' as PrismaSubscriptionStatus,
+          ],
         },
       },
-    );
+    });
 
     const updated: any[] = [];
 
@@ -304,4 +315,3 @@ export class SubscriptionService {
     };
   }
 }
-

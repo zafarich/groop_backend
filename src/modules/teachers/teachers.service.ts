@@ -381,26 +381,59 @@ export class TeachersService {
   }
 
   /**
-   * Soft delete a teacher
+   * Soft delete a teacher and cascade to User and TelegramUser
    */
   async remove(id: number) {
     const teacher = await this.prisma.teacher.findUnique({
       where: { id },
+      include: {
+        user: {
+          include: {
+            telegramUser: true,
+          },
+        },
+      },
     });
 
     if (!teacher || teacher.isDeleted) {
       throw new NotFoundException('Teacher not found');
     }
 
-    await this.prisma.teacher.update({
-      where: { id },
-      data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-      },
+    // Soft delete teacher, user, and telegram user in a transaction
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Soft delete teacher
+      await tx.teacher.update({
+        where: { id },
+        data: {
+          isDeleted: true,
+          deletedAt: new Date(),
+        },
+      });
+
+      // 2. Soft delete associated user
+      await tx.user.update({
+        where: { id: teacher.userId },
+        data: {
+          isDeleted: true,
+          deletedAt: new Date(),
+          isActive: false,
+        },
+      });
+
+      // 3. Soft delete associated telegram user (if exists)
+      if (teacher.user.telegramUser) {
+        await tx.telegramUser.update({
+          where: { id: teacher.user.telegramUser.id },
+          data: {
+            isDeleted: true,
+            deletedAt: new Date(),
+            isActive: false,
+          },
+        });
+      }
     });
 
-    return { message: 'Teacher deleted successfully' };
+    return { message: 'Teacher and associated accounts deleted successfully' };
   }
 
   /**

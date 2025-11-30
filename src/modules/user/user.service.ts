@@ -13,12 +13,15 @@ import { UserType } from '@prisma/client';
 export class UserService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createUserDto: CreateUserDto) {
+  async create(createUserDto: CreateUserDto, activeCenterId: number) {
     const { password, username, centerId, ...rest } = createUserDto;
+
+    // Use activeCenterId if centerId is not provided in DTO
+    const targetCenterId = centerId || activeCenterId;
 
     // Check if center exists
     const center = await this.prisma.center.findUnique({
-      where: { id: centerId },
+      where: { id: targetCenterId },
     });
 
     if (!center) {
@@ -36,12 +39,12 @@ export class UserService {
       data: {
         username,
         password: hashedPassword,
-        centerId,
-        activeCenterId: centerId,
+        centerId: targetCenterId,
+        activeCenterId: targetCenterId,
         ...rest,
         userCenters: {
           create: {
-            centerId,
+            centerId: targetCenterId,
             role: rest.userType || UserType.STUDENT,
           },
         },

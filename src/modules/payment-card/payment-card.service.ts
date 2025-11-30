@@ -17,12 +17,18 @@ export class PaymentCardService {
   /**
    * Create a new payment card for a center
    */
-  async create(createPaymentCardDto: CreatePaymentCardDto) {
+  async create(
+    createPaymentCardDto: CreatePaymentCardDto,
+    activeCenterId: number,
+  ) {
     const { centerId, isPrimary, ...rest } = createPaymentCardDto;
+
+    // Use activeCenterId if centerId is not provided in DTO
+    const targetCenterId = centerId || activeCenterId;
 
     // Verify center exists
     const center = await this.prisma.center.findUnique({
-      where: { id: centerId },
+      where: { id: targetCenterId },
     });
 
     if (!center) {
@@ -33,7 +39,7 @@ export class PaymentCardService {
     if (isPrimary) {
       await this.prisma.centerPaymentCard.updateMany({
         where: {
-          centerId,
+          centerId: targetCenterId,
           isPrimary: true,
         },
         data: {
@@ -45,7 +51,7 @@ export class PaymentCardService {
     // Create the payment card
     const paymentCard = await this.prisma.centerPaymentCard.create({
       data: {
-        centerId,
+        centerId: targetCenterId,
         isPrimary,
         ...rest,
       },
@@ -60,19 +66,15 @@ export class PaymentCardService {
       },
     });
 
-    this.logger.log(`Payment card created for center ${centerId}`);
+    this.logger.log(`Payment card created for center ${targetCenterId}`);
     return paymentCard;
   }
 
   /**
-   * Get all payment cards (optionally filtered by centerId)
+   * Get all payment cards for a center
    */
-  async findAll(centerId?: number, includeHidden = false) {
-    const where: any = {};
-
-    if (centerId) {
-      where.centerId = centerId;
-    }
+  async findAll(centerId: number, includeHidden = false) {
+    const where: any = { centerId };
 
     if (!includeHidden) {
       where.isVisible = true;
@@ -373,4 +375,3 @@ export class PaymentCardService {
     return { success: true, message: 'Cards reordered successfully' };
   }
 }
-

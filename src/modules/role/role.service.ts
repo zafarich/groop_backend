@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateRoleDto, UpdateRoleDto, AssignPermissionDto } from './dto';
 
@@ -6,12 +11,15 @@ import { CreateRoleDto, UpdateRoleDto, AssignPermissionDto } from './dto';
 export class RoleService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createRoleDto: CreateRoleDto) {
+  async create(createRoleDto: CreateRoleDto, activeCenterId: number) {
     const { slug, centerId, ...rest } = createRoleDto;
+
+    // Use activeCenterId if centerId is not provided in DTO
+    const targetCenterId = centerId || activeCenterId;
 
     // Check if center exists
     const center = await this.prisma.center.findUnique({
-      where: { id: centerId },
+      where: { id: targetCenterId },
     });
 
     if (!center) {
@@ -23,19 +31,21 @@ export class RoleService {
       where: {
         slug_centerId: {
           slug,
-          centerId,
+          centerId: targetCenterId,
         },
       },
     });
 
     if (existingRole) {
-      throw new ConflictException('Role with this slug already exists in this center');
+      throw new ConflictException(
+        'Role with this slug already exists in this center',
+      );
     }
 
     const role = await this.prisma.role.create({
       data: {
         slug,
-        centerId,
+        centerId: targetCenterId,
         ...rest,
       },
       include: {
@@ -51,11 +61,9 @@ export class RoleService {
     return role;
   }
 
-  async findAll(centerId?: number) {
-    const where = centerId ? { centerId } : {};
-
+  async findAll(centerId: number) {
     return this.prisma.role.findMany({
-      where,
+      where: { centerId },
       include: {
         center: true,
         rolePermissions: {
@@ -127,7 +135,9 @@ export class RoleService {
       });
 
       if (existingRole) {
-        throw new ConflictException('Role with this slug already exists in this center');
+        throw new ConflictException(
+          'Role with this slug already exists in this center',
+        );
       }
     }
 
@@ -165,7 +175,10 @@ export class RoleService {
     return { message: 'Role deleted successfully' };
   }
 
-  async assignPermission(roleId: number, assignPermissionDto: AssignPermissionDto) {
+  async assignPermission(
+    roleId: number,
+    assignPermissionDto: AssignPermissionDto,
+  ) {
     const { permissionId } = assignPermissionDto;
 
     // Check if role exists
@@ -238,4 +251,3 @@ export class RoleService {
     return this.findAll(centerId);
   }
 }
-
