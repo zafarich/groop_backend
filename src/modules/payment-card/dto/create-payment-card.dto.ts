@@ -11,10 +11,6 @@ import {
 } from 'class-validator';
 
 export class CreatePaymentCardDto {
-  @IsUUID()
-  @IsNotEmpty()
-  centerId: number;
-
   @IsString()
   @IsNotEmpty()
   @MinLength(10)
@@ -58,4 +54,3 @@ export class CreatePaymentCardDto {
   @IsOptional()
   displayOrder?: number;
 }
-
