@@ -42,6 +42,8 @@ export class EskizService {
   }
 
   private async performSend(phoneNumber: string, message: string) {
+    console.log('Sending SMS to:', phoneNumber);
+    console.log('Message:', message);
     const formData = new FormData();
     formData.append('mobile_phone', phoneNumber.replace('+', '')); // Ensure no plus sign if API expects just digits
     formData.append('message', message);
