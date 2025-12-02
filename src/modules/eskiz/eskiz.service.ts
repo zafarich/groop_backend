@@ -15,9 +15,7 @@ export class EskizService {
 
   async sendSms(phoneNumber: string, message: string) {
     try {
-      if (!this.token) {
-        await this.login();
-      }
+      await this.login();
 
       try {
         return await this.performSend(phoneNumber, message);
