@@ -83,7 +83,10 @@ export class EskizService {
 
       if (response.data?.data?.token) {
         this.token = response.data.data.token;
-        this.logger.log('Eskiz token obtained successfully');
+        this.logger.log(
+          'Eskiz token obtained successfully',
+          response.data.data.token,
+        );
       } else {
         throw new Error('No token in response');
       }
