@@ -555,6 +555,10 @@ model Group {
   // Telegram group connection
   telegramGroupId String?  @unique  // Connected Telegram group chat ID
   
+  // Connect token for initial Telegram setup (one-time use)
+  connectToken        String?   @unique  // Secret token for /connect command
+  connectTokenExpires DateTime?          // Token expiration timestamp
+  
   // Status
   status          GroupStatus @default(PENDING)  // PENDING, ACTIVE, INACTIVE
   isActive        Boolean  @default(true)
@@ -577,6 +581,7 @@ model Group {
   @@index([joinLink])
   @@index([status])
   @@index([telegramGroupId])
+  @@index([connectToken])
   @@index([isDeleted])
   @@map("groups")
 }

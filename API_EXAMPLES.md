@@ -26,6 +26,7 @@ curl -X POST http://localhost:3000/api/v1/auth/register \
 ```
 
 **Response:**
+
 ```json
 {
   "user": {
@@ -566,3 +567,136 @@ Postman collection'ni import qilish uchun quyidagi JSON'ni ishlatishingiz mumkin
 
 **Tip:** Postman'da environment o'rnatib, `baseUrl` va `accessToken` o'zgaruvchilarini saqlang.
 
+## Groups
+
+### 1. Create Group (Activation Flow)
+
+```bash
+curl -X POST http://localhost:3000/api/v1/groups \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "NodeJS Backend Course",
+    "monthlyPrice": 1200000,
+    "courseStartDate": "2024-01-15",
+    "courseEndDate": "2024-04-15",
+    "paymentType": "MONTHLY_SAME_DATE",
+    "teachers": [{"teacherId": 1, "isPrimary": true}],
+    "lessonSchedules": [{"dayOfWeek": 1, "startTime": "18:00", "endTime": "20:00"}]
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "code": 0,
+  "data": {
+    "id": 15,
+    "name": "NodeJS Backend Course",
+    "status": "PENDING",
+    "connectToken": "550e8400-e29b-41d4-a716-446655440000",
+    "connectTokenExpires": "2024-01-22T10:00:00.000Z",
+    "joinLink": null
+  },
+  "message": "Group created successfully",
+  "setupInstructions": {
+    "message": "Group created. To activate it, complete the following steps:",
+    "steps": [
+      "Create a separate Telegram group for this course",
+      "Add your bot to the Telegram group and grant it admin permissions",
+      "Send the command /connect 550e8400-e29b-41d4-a716-446655440000 to the Telegram group",
+      "Only after these steps are completed, the group becomes fully active."
+    ],
+    "connectToken": "550e8400-e29b-41d4-a716-446655440000",
+    "tokenExpires": "2024-01-22T10:00:00.000Z"
+  }
+}
+```
+
+### 2. Connect Telegram Group
+
+Use the Telegram App:
+
+1. Create a new group.
+2. Add your bot as an admin.
+3. Send the command:
+   `/connect 550e8400-e29b-41d4-a716-446655440000`
+
+**Bot Response:**
+
+> ✅ Muvaffaqiyatli ulandi!
+>
+> 📚 Guruh: NodeJS Backend Course
+> 🔗 Join link: https://t.me/+AbCdEfGhIjKlMnOp
+>
+> Endi o'quvchilar ushbu link orqali guruhga qo'shilishlari mumkin!
+
+### 3. Get Connection Status
+
+```bash
+curl -X GET http://localhost:3000/api/v1/groups/15/connection-status \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**Response (Pending):**
+
+```json
+{
+  "success": true,
+  "code": 0,
+  "data": {
+    "groupId": 15,
+    "status": "PENDING",
+    "isConnected": false,
+    "telegramGroupId": null,
+    "joinLink": null,
+    "connectToken": "550e8400-e29b-41d4-a716-446655440000",
+    "connectTokenExpires": "2024-01-22T10:00:00.000Z"
+  },
+  "message": "Connection status retrieved successfully"
+}
+```
+
+**Response (Active):**
+
+```json
+{
+  "success": true,
+  "code": 0,
+  "data": {
+    "groupId": 15,
+    "status": "ACTIVE",
+    "isConnected": true,
+    "telegramGroupId": "-100123456789",
+    "joinLink": "https://t.me/+AbCdEfGhIjKlMnOp",
+    "connectToken": null,
+    "connectTokenExpires": null
+  },
+  "message": "Connection status retrieved successfully"
+}
+```
+
+### 4. Regenerate Connect Token
+
+If the token is expired or lost:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/groups/15/regenerate-token \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "code": 0,
+  "data": {
+    "connectToken": "new-uuid-token-here",
+    "connectTokenExpires": "2024-01-29T10:00:00.000Z"
+  },
+  "message": "Connection token regenerated successfully"
+}
+```

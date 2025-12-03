@@ -532,42 +532,31 @@ export class TelegramService {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        '❌ Token kiritilmagan!\\n\\nFoydalanish: `/connect <group_id>`\\n\\nAdmin paneldan group ID ni oling.',
+        '❌ Token kiritilmagan!\n\nFoydalanish: `/connect <connect_token>`\n\nAdmin paneldan connect token ni oling.',
       );
       return;
     }
 
     try {
-      // 3. Parse group ID from token
-      const groupId = parseInt(token, 10);
-      if (isNaN(groupId)) {
-        await this.sendMessageToUser(
-          bot,
-          telegramUser.chatId || '',
-          "❌ Noto'g'ri group ID! Raqam bo'lishi kerak.",
-        );
-        return;
-      }
-
-      // 4. Call GroupsService to connect
+      // 3. Call GroupsService to connect with token
       const result = await this.groupsService.connectTelegramGroup(
-        groupId,
+        token, // Pass connectToken directly
         chatId.toString(),
         bot.botToken,
       );
 
-      // 5. Send success message with join link
+      // 4. Send success message with join link
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        `✅ Muvaffaqiyatli ulandi!\\n\\n` +
-          `📚 Guruh: ${result.name}\\n` +
-          `🔗 Join link: ${result.joinLink}\\n\\n` +
-          `Endi o\'quvchilar ushbu link orqali guruhga qo\'shilishlari mumkin!`,
+        `✅ Muvaffaqiyatli ulandi!\n\n` +
+          `📚 Guruh: ${result.name}\n` +
+          `🔗 Join link: ${result.joinLink}\n\n` +
+          `Endi o'quvchilar ushbu link orqali guruhga qo'shilishlari mumkin!`,
       );
 
       this.logger.log(
-        `Successfully connected group ${groupId} to Telegram chat ${chatId}`,
+        `Successfully connected group ${result.id} to Telegram chat ${chatId}`,
       );
     } catch (error) {
       this.logger.error(

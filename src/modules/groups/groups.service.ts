@@ -11,6 +11,7 @@ import { BotPermissionsService } from './services/bot-permissions.service';
 import { EventsGateway } from '../events/events.gateway';
 import { CreateGroupDto, UpdateGroupDto } from './dto';
 import { Prisma } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class GroupsService {
@@ -79,6 +80,11 @@ export class GroupsService {
 
     // 5. Create group with all related entities in transaction
     const group = await this.prisma.$transaction(async (tx) => {
+      // Generate connect token and expiration (7 days from now)
+      const connectToken = uuidv4();
+      const connectTokenExpires = new Date();
+      connectTokenExpires.setDate(connectTokenExpires.getDate() + 7);
+
       // Create the group
       const newGroup = await tx.group.create({
         data: {
@@ -91,7 +97,9 @@ export class GroupsService {
           paymentType: createGroupDto.paymentType,
           lessonsPerPaymentPeriod: createGroupDto.lessonsPerPaymentPeriod,
           status: 'PENDING', // Waiting for Telegram connection
-          joinLink: null,
+          joinLink: null, // Will be generated after /connect
+          connectToken,
+          connectTokenExpires,
         },
       });
 
@@ -280,35 +288,42 @@ export class GroupsService {
 
   /**
    * Main method to connect Telegram group via /connect command
-   * @param groupId - Group ID from database
+   * @param connectToken - Secret connect token from group creation
    * @param chatId - Telegram group chat ID
    * @param botToken - Bot token for API calls
    * @returns Updated group with join link
    */
   async connectTelegramGroup(
-    groupId: number,
+    connectToken: string,
     chatId: string,
     botToken: string,
   ) {
     this.logger.log(
-      `Attempting to connect Telegram group ${chatId} to group ${groupId}`,
+      `Attempting to connect Telegram group ${chatId} with token ${connectToken}`,
     );
 
-    // 1. Check if group exists
+    // 1. Find group by connectToken
     const group = await this.prisma.group.findUnique({
-      where: { id: groupId, isDeleted: false },
+      where: { connectToken, isDeleted: false },
     });
 
     if (!group) {
-      throw new NotFoundException(`Group ${groupId} not found`);
+      throw new NotFoundException('Invalid or expired connection token');
     }
 
-    // 2. Check if this telegram group is already connected to another group
+    // 2. Check token expiration
+    if (group.connectTokenExpires && group.connectTokenExpires < new Date()) {
+      throw new BadRequestException(
+        'Connection token has expired. Please regenerate a new token from the admin panel.',
+      );
+    }
+
+    // 3. Check if this telegram group is already connected to another group
     const existingConnection = await this.prisma.group.findFirst({
       where: {
         telegramGroupId: chatId,
         isDeleted: false,
-        NOT: { id: groupId },
+        NOT: { id: group.id },
       },
     });
 
@@ -368,7 +383,7 @@ export class GroupsService {
         where: {
           telegramGroupId: chatId,
           isDeleted: false,
-          NOT: { id: groupId },
+          NOT: { id: group.id },
         },
       });
 
@@ -380,11 +395,13 @@ export class GroupsService {
 
       // Update the group
       return tx.group.update({
-        where: { id: groupId },
+        where: { id: group.id },
         data: {
           telegramGroupId: chatId,
           joinLink: joinLinkResult,
           status: 'ACTIVE',
+          connectToken: null, // Clear token after successful connection
+          connectTokenExpires: null,
           updatedAt: new Date(),
         },
         include: {
@@ -401,7 +418,7 @@ export class GroupsService {
     });
 
     this.logger.log(
-      `✅ Group ${groupId} successfully connected to Telegram group ${chatId}`,
+      `✅ Group ${group.id} successfully connected to Telegram group ${chatId}`,
     );
 
     // 6. Emit WebSocket event to admin panel
@@ -443,6 +460,35 @@ export class GroupsService {
   }
 
   /**
+   * Regenerate connect token for a group (if expired or lost)
+   */
+  async regenerateConnectToken(groupId: number) {
+    const group = await this.findOne(groupId);
+
+    if (group.status === 'ACTIVE') {
+      throw new BadRequestException(
+        'Group is already connected. Cannot regenerate token for active groups.',
+      );
+    }
+
+    const connectToken = uuidv4();
+    const connectTokenExpires = new Date();
+    connectTokenExpires.setDate(connectTokenExpires.getDate() + 7);
+
+    return this.prisma.group.update({
+      where: { id: groupId },
+      data: { connectToken, connectTokenExpires },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        connectToken: true,
+        connectTokenExpires: true,
+      },
+    });
+  }
+
+  /**
    * Get connection status for a group
    */
   async getConnectionStatus(id: number) {
@@ -454,6 +500,9 @@ export class GroupsService {
       isConnected: !!group.telegramGroupId,
       telegramGroupId: group.telegramGroupId,
       joinLink: group.joinLink,
+      connectToken: group.status === 'PENDING' ? group.connectToken : null,
+      connectTokenExpires:
+        group.status === 'PENDING' ? group.connectTokenExpires : null,
       connectedAt: group.updatedAt,
     };
   }

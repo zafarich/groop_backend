@@ -35,6 +35,17 @@ export class GroupsController {
       code: 0,
       data: group,
       message: 'Group created successfully',
+      setupInstructions: {
+        message: 'Group created. To activate it, complete the following steps:',
+        steps: [
+          'Create a separate Telegram group for this course',
+          'Add your bot to the Telegram group and grant it admin permissions',
+          `Send the command /connect ${group.connectToken} to the Telegram group`,
+          'Only after these steps are completed, the group becomes fully active.',
+        ],
+        connectToken: group.connectToken,
+        tokenExpires: group.connectTokenExpires,
+      },
     };
   }
 
@@ -97,6 +108,23 @@ export class GroupsController {
       code: 0,
       data: null,
       message: 'Group deleted successfully',
+    };
+  }
+
+  /**
+   * Regenerate connect token for a group
+   */
+  @Post(':id/regenerate-token')
+  async regenerateToken(@Param('id', ParseIntPipe) id: number) {
+    const group = await this.groupsService.regenerateConnectToken(id);
+    return {
+      success: true,
+      code: 0,
+      data: {
+        connectToken: group.connectToken,
+        connectTokenExpires: group.connectTokenExpires,
+      },
+      message: 'Connection token regenerated successfully',
     };
   }
 
