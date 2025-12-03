@@ -28,17 +28,23 @@ async function main() {
     },
   });
 
-  // 3. Create teacher profile
-  const teacher = await prisma.teacher.upsert({
+  // 3. Create teacher profile (find or create since userId is not unique)
+  let teacher = await prisma.teacher.findFirst({
     where: { userId: teacherUser.id },
-    update: {},
-    create: {
-      userId: teacherUser.id,
-      centerId: center.id,
-      specialization: 'Backend',
-      experienceYears: 5,
-    },
   });
+
+  if (!teacher) {
+    teacher = await prisma.teacher.create({
+      data: {
+        userId: teacherUser.id,
+        centerId: center.id,
+        firstName: teacherUser.firstName,
+        lastName: teacherUser.lastName,
+        specialty: 'Backend Development',
+        bio: 'Experienced backend developer',
+      },
+    });
+  }
 
   console.log('✅ Created teacher:', teacher.id);
 }
