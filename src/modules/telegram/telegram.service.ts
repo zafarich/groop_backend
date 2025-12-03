@@ -15,7 +15,13 @@ import {
   UpdateTelegramUserDto,
   TelegramWebhookUpdateDto,
 } from './dto';
-import { CenterTelegramBot, Center, TelegramUser, User } from '@prisma/client';
+import {
+  CenterTelegramBot,
+  Center,
+  TelegramUser,
+  User,
+  UserType,
+} from '@prisma/client';
 
 // Telegram Bot API interfaces
 interface TelegramBotWithCenter extends CenterTelegramBot {
@@ -24,6 +30,17 @@ interface TelegramBotWithCenter extends CenterTelegramBot {
 
 interface TelegramUserWithUser extends TelegramUser {
   user: User | null;
+}
+
+interface CreateUserData {
+  firstName?: string | null;
+  lastName?: string | null;
+  phoneNumber: string;
+  centerId: number;
+  userType: UserType;
+  authProvider: string;
+  telegramUserId: number;
+  username?: string;
 }
 
 interface TelegramMessageFrom {
@@ -97,18 +114,25 @@ export class TelegramService {
 
     // Auto-create linked User if requested (for students)
     if (createLinkedUser && centerId && rest.phoneNumber) {
+      // Prepare user data - only include username if it exists and is not empty
+      const userData: CreateUserData = {
+        firstName: rest.firstName,
+        lastName: rest.lastName,
+        phoneNumber: rest.phoneNumber,
+        centerId,
+        userType: UserType.STUDENT,
+        authProvider: 'telegram',
+        telegramUserId: telegramUser.id,
+        // No email/password for Telegram-only users
+      };
+
+      // Only set username if it exists and is not empty
+      if (rest.username && rest.username.trim() !== '') {
+        userData.username = rest.username;
+      }
+
       const linkedUser = await this.prisma.user.create({
-        data: {
-          firstName: rest.firstName,
-          lastName: rest.lastName,
-          phoneNumber: rest.phoneNumber,
-          username: rest.username,
-          centerId,
-          userType: 'STUDENT',
-          authProvider: 'telegram',
-          telegramUserId: telegramUser.id,
-          // No email/password for Telegram-only users
-        },
+        data: userData,
       });
 
       this.logger.log(
@@ -297,17 +321,24 @@ export class TelegramService {
       // Generate a default phone number from telegram ID if not available
       const defaultPhoneNumber = `998${telegramId.slice(-9).padStart(9, '0')}`;
 
+      // Prepare user data - only include username if it exists and is not empty
+      const userData: CreateUserData = {
+        firstName: message.from.first_name || null,
+        lastName: message.from.last_name || null,
+        phoneNumber: defaultPhoneNumber,
+        centerId: bot.centerId,
+        userType: UserType.STUDENT,
+        authProvider: 'telegram',
+        telegramUserId: telegramUser.id,
+      };
+
+      // Only set username if it exists and is not empty
+      if (message.from.username && message.from.username.trim() !== '') {
+        userData.username = message.from.username;
+      }
+
       const linkedUser = await this.prisma.user.create({
-        data: {
-          firstName: message.from.first_name || null,
-          lastName: message.from.last_name || null,
-          username: message.from.username || null,
-          phoneNumber: defaultPhoneNumber,
-          centerId: bot.centerId,
-          userType: 'STUDENT',
-          authProvider: 'telegram',
-          telegramUserId: telegramUser.id,
-        },
+        data: userData,
       });
 
       this.logger.log(
@@ -344,17 +375,24 @@ export class TelegramService {
           telegramUser.phoneNumber ||
           `998${telegramId.slice(-9).padStart(9, '0')}`;
 
+        // Prepare user data - only include username if it exists and is not empty
+        const userData: CreateUserData = {
+          firstName: telegramUser.firstName || null,
+          lastName: telegramUser.lastName || null,
+          phoneNumber: defaultPhoneNumber,
+          centerId: bot.centerId,
+          userType: UserType.STUDENT,
+          authProvider: 'telegram',
+          telegramUserId: telegramUser.id,
+        };
+
+        // Only set username if it exists and is not empty
+        if (telegramUser.username && telegramUser.username.trim() !== '') {
+          userData.username = telegramUser.username;
+        }
+
         await this.prisma.user.create({
-          data: {
-            firstName: telegramUser.firstName || null,
-            lastName: telegramUser.lastName || null,
-            username: telegramUser.username || null,
-            phoneNumber: defaultPhoneNumber,
-            centerId: bot.centerId,
-            userType: 'STUDENT',
-            authProvider: 'telegram',
-            telegramUserId: telegramUser.id,
-          },
+          data: userData,
         });
 
         this.logger.log(
@@ -1216,16 +1254,25 @@ export class TelegramService {
     if (!linkedUser) {
       // Create User record
       const defaultPhoneNumber = `998${telegramUser.telegramId.slice(-9).padStart(9, '0')}`;
+
+      // Prepare user data - only include username if it exists and is not empty
+      const userData: CreateUserData = {
+        firstName: telegramUser.firstName || botState.studentName,
+        lastName: telegramUser.lastName,
+        phoneNumber: telegramUser.phoneNumber || defaultPhoneNumber,
+        centerId: bot.centerId,
+        userType: UserType.STUDENT,
+        authProvider: 'telegram',
+        telegramUserId: telegramUser.id,
+      };
+
+      // Only set username if it exists and is not empty
+      if (telegramUser.username && telegramUser.username.trim() !== '') {
+        userData.username = telegramUser.username;
+      }
+
       linkedUser = await this.prisma.user.create({
-        data: {
-          firstName: telegramUser.firstName || botState.studentName,
-          lastName: telegramUser.lastName,
-          phoneNumber: telegramUser.phoneNumber || defaultPhoneNumber,
-          centerId: bot.centerId,
-          userType: 'STUDENT',
-          authProvider: 'telegram',
-          telegramUserId: telegramUser.id,
-        },
+        data: userData,
       });
 
       this.logger.log(
