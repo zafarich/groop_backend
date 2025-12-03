@@ -114,11 +114,11 @@ export class CreateGroupDto {
 
   @IsDateString()
   @IsNotEmpty()
-  courseStartDate: Date;
+  courseStartDate: string;
 
   @IsDateString()
   @IsNotEmpty()
-  courseEndDate: Date;
+  courseEndDate: string;
 
   @IsEnum(PaymentType, {
     message:
