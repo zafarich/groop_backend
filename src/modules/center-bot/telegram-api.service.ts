@@ -291,6 +291,69 @@ export class TelegramApiService {
   }
 
   /**
+   * Get chat member info (for checking bot permissions)
+   */
+  async getChatMember(
+    botToken: string,
+    chatId: string | number,
+    userId: number,
+  ): Promise<TelegramResponse> {
+    const url = `https://api.telegram.org/bot${botToken}/getChatMember`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          user_id: userId,
+        }),
+      });
+
+      return await response.json();
+    } catch (error) {
+      this.logger.error(`Error getting chat member: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Retry helper with incremental delay
+   * @param fn - Function to retry
+   * @param attempts - Number of attempts (default: 3)
+   * @param delayMs - Initial delay in milliseconds (default: 500)
+   * @returns Result from the function
+   */
+  async retryWithDelay<T>(
+    fn: () => Promise<T>,
+    attempts: number = 3,
+    delayMs: number = 500,
+  ): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.warn(
+          `Attempt ${i + 1}/${attempts} failed: ${lastError.message}`,
+        );
+
+        // If not last attempt, wait before retrying
+        if (i < attempts - 1) {
+          const currentDelay = delayMs * (i + 1); // Incremental delay
+          this.logger.debug(`Waiting ${currentDelay}ms before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, currentDelay));
+        }
+      }
+    }
+
+    // All attempts failed
+    throw lastError || new Error('All retry attempts failed');
+  }
+
+  /**
    * Get file
    */
   async getFile(botToken: string, fileId: string): Promise<TelegramResponse> {

@@ -16,6 +16,8 @@ import { PlanModule } from './modules/plan/plan.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { PaymentCardModule } from './modules/payment-card/payment-card.module';
 import { TeachersModule } from './modules/teachers/teachers.module';
+import { GroupsModule } from './modules/groups/groups.module';
+import { EventsModule } from './modules/events/events.module';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { TeachersModule } from './modules/teachers/teachers.module';
     SubscriptionModule,
     PaymentCardModule,
     TeachersModule,
+    GroupsModule,
+    EventsModule,
   ],
   controllers: [AppController],
   providers: [

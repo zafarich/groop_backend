@@ -209,6 +209,9 @@ model TelegramUser {
   languageCode String?
   isBot        Boolean  @default(false)
   
+  // Bot state tracking
+  userStep     String?  // Current step in conversation flow (e.g., "enter_name", "select_payment")
+  
   // Status
   isActive     Boolean  @default(true)
   status       String?  @default("active") // active, blocked, pending_payment
@@ -228,6 +231,7 @@ model TelegramUser {
 
   @@index([telegramId])
   @@index([centerId])
+  @@index([userStep])
   @@index([isDeleted])
   @@map("telegram_users")
 }
@@ -265,6 +269,42 @@ model CenterTelegramBot {
   @@index([secretToken])
   @@index([isDeleted])
   @@map("center_telegram_bots")
+}
+
+// Student Bot State - Student bot conversation state tracking
+model StudentBotState {
+  id              Int      @id @default(autoincrement())
+  telegramUserId  Int
+  centerId        Int
+  
+  // Current step in enrollment flow
+  currentStep     String   // "contact_shared", "enter_name", "select_group", "select_payment", "waiting_receipt", "completed"
+  
+  // Selected data
+  groupId         Int?
+  selectedMonths  Int?     // Number of months for payment
+  paymentId       Int?     // Associated payment record
+  
+  // User provided data
+  contactShared   Boolean  @default(false)
+  studentName     String?
+  
+  // Additional metadata (JSON)
+  metadata        Json?    // Store any additional state data
+  
+  // Soft delete
+  isDeleted       Boolean  @default(false)
+  deletedAt       DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([telegramUserId, centerId])
+  @@index([telegramUserId])
+  @@index([centerId])
+  @@index([currentStep])
+  @@index([isDeleted])
+  @@map("student_bot_states")
 }
 
 // Center Payment Cards - O'quv markaz to'lov kartalari
@@ -509,10 +549,14 @@ model Group {
   // For LESSON_BASED payment type
   lessonsPerPaymentPeriod Int?  // Bir to'lov davridagi darslar soni
   
-  // Join link
-  joinLink        String   @unique  // Telegram orqali ulashish uchun link
+  // Join link (generated only after successful /connect)
+  joinLink        String?  @unique  // Telegram orqali ulashish uchun link
+  
+  // Telegram group connection
+  telegramGroupId String?  @unique  // Connected Telegram group chat ID
   
   // Status
+  status          GroupStatus @default(PENDING)  // PENDING, ACTIVE, INACTIVE
   isActive        Boolean  @default(true)
   
   // Soft delete
@@ -531,6 +575,8 @@ model Group {
 
   @@index([centerId])
   @@index([joinLink])
+  @@index([status])
+  @@index([telegramGroupId])
   @@index([isDeleted])
   @@map("groups")
 }
@@ -950,5 +996,11 @@ enum ScheduleStatus {
   SCHEDULED
   GENERATED
   CANCELLED
+}
+
+enum GroupStatus {
+  PENDING   // Waiting for Telegram group connection
+  ACTIVE    // Connected to Telegram and active
+  INACTIVE  // Deactivated
 }
 

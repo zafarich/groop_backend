@@ -4,9 +4,12 @@ import {
   ConflictException,
   UnauthorizedException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { TelegramApiService } from '../center-bot/telegram-api.service';
+import { GroupsService } from '../groups/groups.service';
 import {
   CreateTelegramUserDto,
   UpdateTelegramUserDto,
@@ -65,6 +68,8 @@ export class TelegramService {
   constructor(
     private prisma: PrismaService,
     private telegramApi: TelegramApiService,
+    @Inject(forwardRef(() => GroupsService))
+    private groupsService: GroupsService,
   ) {}
 
   async createTelegramUser(createTelegramUserDto: CreateTelegramUserDto) {
@@ -433,6 +438,9 @@ export class TelegramService {
         case '/start':
           await this.handleStartCommand(bot, telegramUser, params[0]);
           break;
+        case '/connect':
+          await this.handleConnectCommand(bot, telegramUser, params[0]);
+          break;
         case '/help':
           await this.handleHelpCommand(bot, telegramUser);
           break;
@@ -447,7 +455,7 @@ export class TelegramService {
           );
       }
     } else {
-      // Handle regular messages (possible user inputs)
+      // Handle regular messages (possible user inputs for enrollment flow)
       await this.handleRegularMessage(bot, telegramUser, text);
     }
   }
@@ -489,6 +497,93 @@ export class TelegramService {
       telegramUser.chatId || '',
       welcomeMessage,
     );
+  }
+
+  /**
+   * Handle /connect command (group chat only, admin only)
+   */
+  private async handleConnectCommand(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    token?: string,
+  ) {
+    this.logger.log(
+      `/connect command from ${telegramUser.telegramId} with token: ${token}`,
+    );
+
+    // Get chat ID and type from telegramUser
+    const chatId = Number(telegramUser.chatId);
+    const chatType = telegramUser.chatId ? 'group' : 'private'; // This is approximate
+
+    // 1. Validate this is a group chat (not private)
+    // In real implementation, you'd get this from the message object, but we can check using chat ID
+    // Telegram group IDs are negative numbers
+    if (chatId >= 0) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Bu buyruq faqat guruh chatida ishlatiladi! Iltimos, botni guruhga qo'shing va u yerda /connect buyrug'ini ishga tushiring.",
+      );
+      return;
+    }
+
+    // 2. Validate token provided
+    if (!token || token.trim() === '') {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Token kiritilmagan!\\n\\nFoydalanish: `/connect <group_id>`\\n\\nAdmin paneldan group ID ni oling.',
+      );
+      return;
+    }
+
+    try {
+      // 3. Parse group ID from token
+      const groupId = parseInt(token, 10);
+      if (isNaN(groupId)) {
+        await this.sendMessageToUser(
+          bot,
+          telegramUser.chatId || '',
+          "❌ Noto'g'ri group ID! Raqam bo'lishi kerak.",
+        );
+        return;
+      }
+
+      // 4. Call GroupsService to connect
+      const result = await this.groupsService.connectTelegramGroup(
+        groupId,
+        chatId.toString(),
+        bot.botToken,
+      );
+
+      // 5. Send success message with join link
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `✅ Muvaffaqiyatli ulandi!\\n\\n` +
+          `📚 Guruh: ${result.name}\\n` +
+          `🔗 Join link: ${result.joinLink}\\n\\n` +
+          `Endi o\'quvchilar ushbu link orqali guruhga qo\'shilishlari mumkin!`,
+      );
+
+      this.logger.log(
+        `Successfully connected group ${groupId} to Telegram chat ${chatId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error connecting group: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+
+      // Send error message to group
+      const errorMessage =
+        error instanceof Error ? error.message : "Noma'lum xatolik yuz berdi.";
+
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `❌ Xatolik: ${errorMessage}`,
+      );
+    }
   }
 
   /**
@@ -698,16 +793,364 @@ export class TelegramService {
   }
 
   /**
-   * Handle regular text messages
+   * Handle regular text messages based on user state
    */
-  private handleRegularMessage(
+  private async handleRegularMessage(
     bot: TelegramBotWithCenter,
     telegramUser: TelegramUserWithUser,
     text: string,
   ) {
-    // Check if user is in some state (e.g., waiting for input)
-    // For now, just echo back
-    this.logger.log(`Regular message from ${telegramUser.telegramId}: ${text}`);
+    this.logger.log(
+      `Regular message from ${telegramUser.telegramId}: ${text}, current step: ${telegramUser.userStep}`,
+    );
+
+    // Check user's current step in enrollment flow
+    const currentStep = telegramUser.userStep;
+
+    if (!currentStep) {
+      // No active enrollment, ignore or show help
+      this.logger.debug(`No active step for user ${telegramUser.telegramId}`);
+      return;
+    }
+
+    // Route to appropriate handler based on current step
+    switch (currentStep) {
+      case 'enter_name':
+        await this.handleNameEntry(bot, telegramUser, text);
+        break;
+      case 'select_group':
+        await this.handleGroupSelection(bot, telegramUser, text);
+        break;
+      case 'select_payment':
+        await this.handlePaymentSelection(bot, telegramUser, text);
+        break;
+      default:
+        this.logger.warn(
+          `Unknown user step: ${currentStep} for user ${telegramUser.telegramId}`,
+        );
+        break;
+    }
+  }
+
+  /**
+   * Handle name entry step
+   */
+  private async handleNameEntry(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    text: string,
+  ) {
+    const name = text.trim();
+
+    if (name.length < 2) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Iltimos, to'liq ismingizni kiriting (kamida 2 harf).",
+      );
+      return;
+    }
+
+    // Save name to StudentBotState
+    await this.prisma.studentBotState.upsert({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      update: {
+        studentName: name,
+        currentStep: 'select_group',
+      },
+      create: {
+        telegramUserId: telegramUser.id,
+        centerId: bot.centerId,
+        studentName: name,
+        currentStep: 'select_group',
+        contactShared: true,
+      },
+    });
+
+    // Update user step
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: 'select_group' },
+    });
+
+    // Show available groups
+    const groups = await this.prisma.group.findMany({
+      where: {
+        centerId: bot.centerId,
+        status: 'ACTIVE',
+        isDeleted: false,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    if (groups.length === 0) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Hozirda mavjud guruhlar yo'q. Iltimos, keyinroq qayta urinib ko'ring.",
+      );
+      return;
+    }
+
+    let groupList = `✅ Rahmat, ${name}!\\n\\n📚 Mavjud guruhlar:\\n\\n`;
+    groups.forEach((group, index) => {
+      groupList += `${index + 1}. ${group.name}\\n`;
+      groupList += `   💰 Narx: ${group.monthlyPrice} so'm/oy\\n`;
+      if (group.description) {
+        groupList += `   📝 ${group.description}\\n`;
+      }
+      groupList += `\\n`;
+    });
+
+    groupList += `\\nGuruh raqamini kiriting (1-${groups.length}):`;
+
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', groupList);
+  }
+
+  /**
+   * Handle group selection step
+   */
+  private async handleGroupSelection(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    text: string,
+  ) {
+    const groupNumber = parseInt(text.trim(), 10);
+
+    // Get available groups
+    const groups = await this.prisma.group.findMany({
+      where: {
+        centerId: bot.centerId,
+        status: 'ACTIVE',
+        isDeleted: false,
+      },
+      include: {
+        groupDiscounts: {
+          where: { isDeleted: false },
+          orderBy: { months: 'asc' },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    if (isNaN(groupNumber) || groupNumber < 1 || groupNumber > groups.length) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `❌ Noto'g'ri raqam. Iltimos, 1 dan ${groups.length} gacha raqam kiriting.`,
+      );
+      return;
+    }
+
+    const selectedGroup = groups[groupNumber - 1];
+
+    // Update state with selected group
+    await this.prisma.studentBotState.update({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      data: {
+        groupId: selectedGroup.id,
+        currentStep: 'select_payment',
+      },
+    });
+
+    // Update user step
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: 'select_payment' },
+    });
+
+    // Show payment options
+    let paymentOptions = `✅ Siz tanladingiz: ${selectedGroup.name}\\n\\n`;
+    paymentOptions += `💰 To'lov variantlari:\\n\\n`;
+    paymentOptions += `1. 1 oy - ${selectedGroup.monthlyPrice} so'm\\n`;
+
+    // Add multi-month options with discounts
+    selectedGroup.groupDiscounts.forEach((discount, index) => {
+      const totalPrice =
+        Number(selectedGroup.monthlyPrice) * discount.months -
+        Number(discount.discountAmount);
+      paymentOptions += `${index + 2}. ${discount.months} oy - ${totalPrice} so'm `;
+      paymentOptions += `(${discount.discountAmount} so'm chegirma!)\\n`;
+    });
+
+    paymentOptions += `\\nTo'lov turini tanlang (1-${1 + selectedGroup.groupDiscounts.length}):`;
+
+    await this.sendMessageToUser(
+      bot,
+      telegramUser.chatId || '',
+      paymentOptions,
+    );
+  }
+
+  /**
+   * Handle payment selection step
+   */
+  private async handlePaymentSelection(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    text: string,
+  ) {
+    const paymentOption = parseInt(text.trim(), 10);
+
+    // Get bot state
+    const botState = await this.prisma.studentBotState.findUnique({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+    });
+
+    if (!botState || !botState.groupId) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Xatolik yuz berdi. Iltimos, qaytadan boshlang.',
+      );
+      return;
+    }
+
+    // Get group with discounts
+    const group = await this.prisma.group.findUnique({
+      where: { id: botState.groupId },
+      include: {
+        groupDiscounts: {
+          where: { isDeleted: false },
+          orderBy: { months: 'asc' },
+        },
+      },
+    });
+
+    if (!group) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Guruh topilmadi.',
+      );
+      return;
+    }
+
+    const maxOptions = 1 + group.groupDiscounts.length;
+    if (
+      isNaN(paymentOption) ||
+      paymentOption < 1 ||
+      paymentOption > maxOptions
+    ) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `❌ Noto'g'ri tanlov. Iltimos, 1 dan ${maxOptions} gacha raqam kiriting.`,
+      );
+      return;
+    }
+
+    // Calculate months and amount
+    let months = 1;
+    let amount = Number(group.monthlyPrice);
+
+    if (paymentOption > 1) {
+      const discount = group.groupDiscounts[paymentOption - 2];
+      months = discount.months;
+      amount =
+        Number(group.monthlyPrice) * months - Number(discount.discountAmount);
+    }
+
+    // Check for existing pending payment (one-payment-at-a-time enforcement)
+    if (telegramUser.user) {
+      const student = await this.prisma.student.findFirst({
+        where: {
+          userId: telegramUser.user.id,
+          centerId: bot.centerId,
+          isDeleted: false,
+        },
+      });
+
+      if (student) {
+        const existingPendingPayment = await this.prisma.payment.findFirst({
+          where: {
+            studentId: student.id,
+            groupId: group.id,
+            status: 'PENDING',
+            isDeleted: false,
+          },
+        });
+
+        if (existingPendingPayment) {
+          await this.sendMessageToUser(
+            bot,
+            telegramUser.chatId || '',
+            "❌ Sizda bu guruh uchun kutilayotgan to'lov mavjud. Avval uni yakunlang.",
+          );
+          return;
+        }
+      }
+    }
+
+    // Save selected payment info to state
+    await this.prisma.studentBotState.update({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      data: {
+        selectedMonths: months,
+        currentStep: 'waiting_receipt',
+        metadata: {
+          amount,
+          months,
+        },
+      },
+    });
+
+    // Update user step
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: 'waiting_receipt' },
+    });
+
+    // Show payment cards
+    const paymentCards = await this.prisma.centerPaymentCard.findMany({
+      where: {
+        centerId: bot.centerId,
+        isVisible: true,
+        isActive: true,
+      },
+      orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
+    });
+
+    let paymentInfo = `✅ To'lov: ${months} oy - ${amount} so'm\\n\\n`;
+
+    if (paymentCards && paymentCards.length > 0) {
+      paymentInfo += `💳 To'lov uchun kartalar:\\n\\n`;
+
+      for (const card of paymentCards) {
+        paymentInfo += `${card.isPrimary ? '⭐ ' : ''}${card.cardNumber}\\n`;
+        paymentInfo += `${card.cardHolder}\\n`;
+        if (card.bankName) {
+          paymentInfo += `Bank: ${card.bankName}\\n`;
+        }
+        paymentInfo += `\\n`;
+      }
+
+      paymentInfo += `\\nTo'lov chekini rasmda yuboring 📸`;
+    } else {
+      paymentInfo += `\\nIltimos, admin bilan bog'laning.`;
+    }
+
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', paymentInfo);
   }
 
   /**
@@ -722,6 +1165,14 @@ export class TelegramService {
       `Received photo from ${telegramUser.telegramId} for center ${bot.center.name}`,
     );
 
+    // Check if user is in waiting_receipt state
+    if (telegramUser.userStep !== 'waiting_receipt') {
+      this.logger.debug(
+        `User ${telegramUser.telegramId} sent photo but not in waiting_receipt state`,
+      );
+      return;
+    }
+
     if (!message.photo || message.photo.length === 0) {
       return;
     }
@@ -732,26 +1183,140 @@ export class TelegramService {
     // Get file info
     const fileInfo = await this.telegramApi.getFile(bot.botToken, fileId);
 
-    if (fileInfo.ok && fileInfo.result?.file_path) {
-      const fileUrl = this.telegramApi.getFileUrl(
-        bot.botToken,
-        fileInfo.result.file_path,
-      );
-
-      this.logger.log(`Payment receipt file URL: ${fileUrl}`);
-
-      // TODO: Save receipt to database and notify admin
-      // await this.savePaymentReceipt(telegramUser.id, fileUrl, message.caption);
-
+    if (!fileInfo.ok || !fileInfo.result?.file_path) {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        '✅ Chek qabul qilindi!\n\n' +
-          "To'lovingiz tekshirilmoqda. Tasdiqlangandan keyin sizga xabar beramiz.",
+        '❌ Rasmni yuklab olishda xatolik. Iltimos, qayta yuboring.',
       );
-
-      // TODO: Notify admins about new payment receipt
+      return;
     }
+
+    const fileUrl = this.telegramApi.getFileUrl(
+      bot.botToken,
+      fileInfo.result.file_path,
+    );
+
+    this.logger.log(`Payment receipt file URL: ${fileUrl}`);
+
+    // Get bot state
+    const botState = await this.prisma.studentBotState.findUnique({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+    });
+
+    if (!botState || !botState.groupId || !botState.metadata) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Xatolik yuz berdi. Iltimos, qaytadan boshlang.',
+      );
+      return;
+    }
+
+    const metadata = botState.metadata as any;
+    const amount = metadata.amount;
+    const months = metadata.months;
+
+    // Ensure user has a linked User record
+    let linkedUser = telegramUser.user;
+    if (!linkedUser) {
+      // Create User record
+      const defaultPhoneNumber = `998${telegramUser.telegramId.slice(-9).padStart(9, '0')}`;
+      linkedUser = await this.prisma.user.create({
+        data: {
+          firstName: telegramUser.firstName || botState.studentName,
+          lastName: telegramUser.lastName,
+          phoneNumber: telegramUser.phoneNumber || defaultPhoneNumber,
+          centerId: bot.centerId,
+          userType: 'STUDENT',
+          authProvider: 'telegram',
+          telegramUserId: telegramUser.id,
+        },
+      });
+
+      this.logger.log(
+        `Created linked User ${linkedUser.id} for payment processing`,
+      );
+    }
+
+    // Find or create Student record
+    let student = await this.prisma.student.findFirst({
+      where: {
+        userId: linkedUser.id,
+        centerId: bot.centerId,
+        isDeleted: false,
+      },
+    });
+
+    if (!student) {
+      student = await this.prisma.student.create({
+        data: {
+          userId: linkedUser.id,
+          centerId: bot.centerId,
+          firstName: linkedUser.firstName,
+          lastName: linkedUser.lastName,
+        },
+      });
+
+      this.logger.log(`Created Student record ${student.id}`);
+    }
+
+    // Create Payment record
+    const payment = await this.prisma.payment.create({
+      data: {
+        centerId: bot.centerId,
+        groupId: botState.groupId,
+        studentId: student.id,
+        amount,
+        currency: 'UZS',
+        status: 'PENDING',
+        paymentMethod: 'BANK_TRANSFER',
+        notes: `Receipt URL: ${fileUrl}\\nMonths: ${months}\\nCaption: ${message.caption || 'N/A'}`,
+        periodStart: new Date(),
+      },
+    });
+
+    this.logger.log(`Created Payment record ${payment.id} for ${amount} UZS`);
+
+    // Update bot state with payment ID
+    await this.prisma.studentBotState.update({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      data: {
+        paymentId: payment.id,
+        currentStep: 'completed',
+      },
+    });
+
+    // Clear user step (enrollment complete)
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: null },
+    });
+
+    await this.sendMessageToUser(
+      bot,
+      telegramUser.chatId || '',
+      '✅ Chek qabul qilindi!\\n\\n' +
+        `To'lovingiz tekshirilmoqda (${amount} so'm, ${months} oy).\\n` +
+        'Tasdiqlangandan keyin sizga xabar beramiz.\\n\\n' +
+        "Yangi guruhga yozilish uchun /start buyrug'ini yuboring.",
+    );
+
+    this.logger.log(
+      `Payment receipt processed for user ${telegramUser.telegramId}, payment ID: ${payment.id}`,
+    );
+
+    // TODO: Notify admins about new payment receipt via WebSocket or telegram
   }
 
   /**
