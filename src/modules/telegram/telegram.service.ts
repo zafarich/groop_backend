@@ -314,7 +314,7 @@ export class TelegramService {
         where: { telegramId },
         include: { user: true },
       });
-
+    console.log('TELEGRAM USER', telegramUser);
     if (!telegramUser) {
       // Create new TelegramUser
       telegramUser = await this.prisma.telegramUser.create({
