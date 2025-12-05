@@ -952,13 +952,14 @@ export class TelegramService {
       return;
     }
 
-    // Format phone number (ensure it has country code)
+    // Format phone number to 998901234567 format (no + sign)
     let phoneNumber = contact.phone_number;
-    if (!phoneNumber.startsWith('+')) {
-      phoneNumber = '+' + phoneNumber;
+    // Remove all non-digit characters (including +)
+    phoneNumber = phoneNumber.replace(/\D/g, '');
+    // Ensure it starts with country code (if it doesn't, add 998)
+    if (!phoneNumber.startsWith('998')) {
+      phoneNumber = '998' + phoneNumber;
     }
-    // Remove non-digit characters except +
-    phoneNumber = phoneNumber.replace(/[^\d+]/g, '');
 
     // Check if a User with this phone number already exists
     const existingUser = await this.prisma.user.findFirst({
