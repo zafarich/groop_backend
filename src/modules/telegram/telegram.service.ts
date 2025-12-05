@@ -419,7 +419,7 @@ export class TelegramService {
           include: { user: true },
         })) as TelegramUserWithUser;
       }
-
+      console.log('telegramUser 22222', telegramUser);
       // Create linked User if doesn't exist and NOT in /start registration flow
       if (
         telegramUser &&
@@ -428,41 +428,65 @@ export class TelegramService {
         !isDirectStart
       ) {
         // Double-check: verify no User exists with this telegramUserId
-        const existingUser = await this.prisma.user.findFirst({
+        const existingUserByTelegramId = await this.prisma.user.findFirst({
           where: {
             telegramUserId: telegramUser.id,
             isDeleted: false,
           },
         });
 
-        if (!existingUser) {
-          // Generate a default phone number from telegram ID if not available
-          const defaultPhoneNumber =
+        if (!existingUserByTelegramId) {
+          // Get phone number (from telegramUser or generate default)
+          const phoneNumber =
             telegramUser.phoneNumber ||
             `998${telegramId.slice(-9).padStart(9, '0')}`;
 
-          const userData = buildUserData({
-            firstName: telegramUser.firstName || null,
-            lastName: telegramUser.lastName || null,
-            phoneNumber: defaultPhoneNumber,
-            centerId: bot.centerId,
-            userType: UserType.STUDENT,
-            authProvider: 'telegram',
-            telegramUserId: telegramUser.id,
-            username: telegramUser.username,
+          // Check if a User with this phone number already exists
+          const existingUserByPhone = await this.prisma.user.findFirst({
+            where: {
+              phoneNumber,
+              isDeleted: false,
+            },
           });
 
-          this.logger.log(
-            `Creating user for existing TelegramUser with username: ${userData.username || 'NOT SET'}`,
-          );
+          if (existingUserByPhone) {
+            // Link existing user to this telegram user
+            this.logger.log(
+              `Found existing user ${existingUserByPhone.id} with phone ${phoneNumber}, linking to TelegramUser ${telegramUser.id}`,
+            );
 
-          await this.prisma.user.create({
-            data: userData,
-          });
+            await this.prisma.user.update({
+              where: { id: existingUserByPhone.id },
+              data: {
+                telegramUserId: telegramUser.id,
+                authProvider: 'telegram',
+              },
+            });
+          } else {
+            // No existing user found, create new one
+            const userData = buildUserData({
+              firstName: telegramUser.firstName || null,
+              lastName: telegramUser.lastName || null,
+              phoneNumber,
+              centerId: bot.centerId,
+              userType: UserType.STUDENT,
+              authProvider: 'telegram',
+              telegramUserId: telegramUser.id,
+              username: telegramUser.username,
+            });
 
-          this.logger.log(
-            `Created linked User for existing TelegramUser ${telegramUser.id}`,
-          );
+            this.logger.log(
+              `Creating user for existing TelegramUser with username: ${userData.username || 'NOT SET'}`,
+            );
+
+            await this.prisma.user.create({
+              data: userData,
+            });
+
+            this.logger.log(
+              `Created linked User for existing TelegramUser ${telegramUser.id}`,
+            );
+          }
         } else {
           this.logger.log(
             `User already exists for TelegramUser ${telegramUser.id}, skipping creation`,
