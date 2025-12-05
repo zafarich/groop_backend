@@ -440,7 +440,7 @@ export class TelegramService {
           const phoneNumber =
             telegramUser.phoneNumber ||
             `998${telegramId.slice(-9).padStart(9, '0')}`;
-
+          console.log('phoneNumber Zafar', phoneNumber);
           // Check if a User with this phone number already exists
           const existingUserByPhone = await this.prisma.user.findFirst({
             where: {
