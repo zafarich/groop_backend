@@ -422,13 +422,14 @@ export class TelegramService {
           await this.promptShareContact(bot, telegramUser);
           return;
         }
-      } else {
-        // For group chat: Do nothing - ignore group messages
-        this.logger.log(
-          `Ignoring message from group chat for existing user ${telegramId}`,
-        );
-        return;
       }
+      // else {
+      //   // For group chat: Do nothing - ignore group messages
+      //   this.logger.log(
+      //     `Ignoring message from group chat for existing user ${telegramId}`,
+      //   );
+      //   return;
+      // }
     }
 
     // Ensure telegramUser is not null
