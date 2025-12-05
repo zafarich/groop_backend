@@ -952,6 +952,56 @@ export class TelegramService {
     // Remove non-digit characters except +
     phoneNumber = phoneNumber.replace(/[^\d+]/g, '');
 
+    // Check if a User with this phone number already exists
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        phoneNumber,
+        isDeleted: false,
+      },
+    });
+
+    if (existingUser) {
+      // Link existing user to this telegram user immediately
+      this.logger.log(
+        `Found existing user ${existingUser.id} with phone ${phoneNumber}, linking to TelegramUser ${telegramUser.id}`,
+      );
+
+      await this.prisma.$transaction(async (tx) => {
+        // Link the existing user to this telegram user
+        await tx.user.update({
+          where: { id: existingUser.id },
+          data: {
+            telegramUserId: telegramUser.id,
+            authProvider: 'telegram',
+          },
+        });
+
+        // Update TelegramUser with phone number and clear userStep
+        await tx.telegramUser.update({
+          where: { id: telegramUser.id },
+          data: {
+            phoneNumber,
+            firstName: existingUser.firstName || telegramUser.firstName,
+            lastName: existingUser.lastName || telegramUser.lastName,
+            userStep: null,
+          },
+        });
+      });
+
+      // Send success message
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `✅ Muvaffaqiyatli ulandi!\n\n` +
+          `Siz allaqachon tizimda ro'yxatdan o'tgansiz.\n` +
+          `Telegram hisobingiz profilingizga ulandi.\n\n` +
+          `/menu - Kurslarni ko'rish`,
+        { reply_markup: this.telegramApi.buildRemoveKeyboard() },
+      );
+      return;
+    }
+
+    // No existing user found, continue with registration flow
     // Update TelegramUser with phone number and advance to next step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
@@ -1046,47 +1096,6 @@ export class TelegramService {
     const password = this.generateRandomPassword();
 
     try {
-      // Check if user with this phone number already exists
-      const existingUser = await this.prisma.user.findFirst({
-        where: {
-          phoneNumber: freshTelegramUser.phoneNumber,
-          isDeleted: false,
-        },
-      });
-
-      if (existingUser) {
-        // Link existing user to this telegram user
-        await this.prisma.$transaction(async (tx) => {
-          // Update existing user to link with telegram
-          await tx.user.update({
-            where: { id: existingUser.id },
-            data: {
-              telegramUserId: telegramUser.id,
-              authProvider: 'telegram',
-            },
-          });
-
-          // Clear the userStep
-          await tx.telegramUser.update({
-            where: { id: telegramUser.id },
-            data: {
-              lastName,
-              userStep: null,
-            },
-          });
-        });
-
-        await this.sendMessageToUser(
-          bot,
-          telegramUser.chatId || '',
-          `✅ Muvaffaqiyatli ulandi!\n\n` +
-            `Siz allaqachon tizimda ro'yxatdan o'tgansiz.\n` +
-            `Telegram hisobingiz profilingizga ulandi.\n\n` +
-            `/menu - Kurslarni ko'rish`,
-        );
-        return;
-      }
-
       // Create new User and Student in a transaction
       await this.prisma.$transaction(async (tx) => {
         // Create User with STUDENT role
@@ -1113,7 +1122,7 @@ export class TelegramService {
           },
         });
 
-        // Clear the userStep
+        // Clear the userStep and update lastName
         await tx.telegramUser.update({
           where: { id: telegramUser.id },
           data: {
