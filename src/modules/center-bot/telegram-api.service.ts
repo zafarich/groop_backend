@@ -392,4 +392,36 @@ export class TelegramApiService {
       inline_keyboard: buttons,
     };
   }
+
+  /**
+   * Build reply keyboard (for contact request, etc.)
+   */
+  buildReplyKeyboard(
+    buttons: Array<
+      Array<{
+        text: string;
+        request_contact?: boolean;
+        request_location?: boolean;
+      }>
+    >,
+    options?: {
+      resize_keyboard?: boolean;
+      one_time_keyboard?: boolean;
+    },
+  ) {
+    return {
+      keyboard: buttons,
+      resize_keyboard: options?.resize_keyboard ?? true,
+      one_time_keyboard: options?.one_time_keyboard ?? true,
+    };
+  }
+
+  /**
+   * Remove reply keyboard
+   */
+  buildRemoveKeyboard() {
+    return {
+      remove_keyboard: true,
+    };
+  }
 }

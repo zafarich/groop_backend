@@ -10,7 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   Headers,
-  ParseIntPipe
+  ParseIntPipe,
 } from '@nestjs/common';
 import { TelegramService } from './telegram.service';
 import {
@@ -48,7 +48,6 @@ export class TelegramController {
       headers,
     );
   }
-
 
   /**
    * CRUD operations for Telegram users

@@ -86,6 +86,12 @@ interface TelegramMessage {
     height: number;
   }>;
   caption?: string;
+  contact?: {
+    phone_number: string;
+    first_name?: string;
+    last_name?: string;
+    user_id?: number;
+  };
 }
 
 interface TelegramCallbackQuery {
@@ -308,6 +314,10 @@ export class TelegramService {
     const telegramId = message.from.id.toString();
     const chatId = message.chat.id.toString();
 
+    // Check if this is a /start command (for registration flow)
+    const isStartCommand = message.text?.startsWith('/start');
+    const isDirectStart = isStartCommand && message.text?.trim() === '/start';
+
     // Upsert telegram user (globally unique by telegramId)
     let telegramUser: TelegramUserWithUser | null =
       await this.prisma.telegramUser.findUnique({
@@ -316,7 +326,7 @@ export class TelegramService {
       });
     console.log('TELEGRAM USER', telegramUser);
     if (!telegramUser) {
-      // Create new TelegramUser
+      // Create new TelegramUser (without creating User for /start flow)
       telegramUser = await this.prisma.telegramUser.create({
         data: {
           telegramId,
@@ -332,46 +342,74 @@ export class TelegramService {
         include: { user: true },
       });
 
-      // Auto-create linked User for students
-      // Generate a default phone number from telegram ID if not available
-      const defaultPhoneNumber = `998${telegramId.slice(-9).padStart(9, '0')}`;
+      // For direct /start flow: Don't auto-create User, let registration flow handle it
+      // For other messages (group interaction, etc.): Auto-create User
+      if (!isDirectStart) {
+        // Generate a default phone number from telegram ID if not available
+        const defaultPhoneNumber = `998${telegramId.slice(-9).padStart(9, '0')}`;
 
-      const userData = buildUserData({
-        firstName: message.from.first_name || null,
-        lastName: message.from.last_name || null,
-        phoneNumber: defaultPhoneNumber,
-        centerId: bot.centerId,
-        userType: UserType.STUDENT,
-        authProvider: 'telegram',
-        telegramUserId: telegramUser.id,
-        username: message.from.username,
-      });
+        const userData = buildUserData({
+          firstName: message.from.first_name || null,
+          lastName: message.from.last_name || null,
+          phoneNumber: defaultPhoneNumber,
+          centerId: bot.centerId,
+          userType: UserType.STUDENT,
+          authProvider: 'telegram',
+          telegramUserId: telegramUser.id,
+          username: message.from.username,
+        });
 
-      this.logger.log(
-        `Creating user from message with username: ${userData.username || 'NOT SET'}`,
-      );
+        this.logger.log(
+          `Creating user from message with username: ${userData.username || 'NOT SET'}`,
+        );
 
-      const linkedUser = await this.prisma.user.create({
-        data: userData,
-      });
+        const linkedUser = await this.prisma.user.create({
+          data: userData,
+        });
 
-      this.logger.log(
-        `Created new telegram user ${telegramId} and linked User ${linkedUser.id} for center ${bot.center.name}`,
-      );
+        this.logger.log(
+          `Created new telegram user ${telegramId} and linked User ${linkedUser.id} for center ${bot.center.name}`,
+        );
 
-      // Reload with user relation
-      telegramUser = (await this.prisma.telegramUser.findUnique({
-        where: { id: telegramUser.id },
-        include: { user: true },
-      })) as TelegramUserWithUser;
+        // Reload with user relation
+        telegramUser = (await this.prisma.telegramUser.findUnique({
+          where: { id: telegramUser.id },
+          include: { user: true },
+        })) as TelegramUserWithUser;
+      }
     } else {
       // Update chat_id and centerId if changed
-      const updateData: { chatId?: string; centerId?: number } = {};
+      const updateData: {
+        chatId?: string;
+        centerId?: number;
+        username?: string;
+        firstName?: string;
+        lastName?: string;
+      } = {};
       if (telegramUser.chatId !== chatId) {
         updateData.chatId = chatId;
       }
       if (!telegramUser.centerId && bot.centerId) {
         updateData.centerId = bot.centerId;
+      }
+      // Update Telegram profile data if changed
+      if (
+        message.from.username &&
+        telegramUser.username !== message.from.username
+      ) {
+        updateData.username = message.from.username;
+      }
+      if (
+        message.from.first_name &&
+        telegramUser.firstName !== message.from.first_name
+      ) {
+        updateData.firstName = message.from.first_name;
+      }
+      if (
+        message.from.last_name &&
+        telegramUser.lastName !== message.from.last_name
+      ) {
+        updateData.lastName = message.from.last_name;
       }
 
       if (Object.keys(updateData).length > 0) {
@@ -382,8 +420,13 @@ export class TelegramService {
         })) as TelegramUserWithUser;
       }
 
-      // Create linked User if doesn't exist
-      if (telegramUser && !telegramUser.user && bot.centerId) {
+      // Create linked User if doesn't exist and NOT in /start registration flow
+      if (
+        telegramUser &&
+        !telegramUser.user &&
+        bot.centerId &&
+        !isDirectStart
+      ) {
         // Double-check: verify no User exists with this telegramUserId
         const existingUser = await this.prisma.user.findFirst({
           where: {
@@ -437,6 +480,12 @@ export class TelegramService {
     // Ensure telegramUser is not null
     if (!telegramUser) {
       this.logger.error('TelegramUser is null after processing');
+      return;
+    }
+
+    // Handle contact sharing (for /start registration flow)
+    if (message.contact) {
+      await this.handleContactMessage(bot, telegramUser, message.contact);
       return;
     }
 
@@ -552,16 +601,44 @@ export class TelegramService {
       }
     }
 
-    // Default welcome message
+    // Direct /start (no params) - Start registration flow
+    // Check if user already has a linked User (registration complete)
+    if (telegramUser.user) {
+      // Already registered, show welcome message
+      const welcomeMessage =
+        bot.welcomeMessage ||
+        `Assalomu alaykum, ${telegramUser.user.firstName || 'hurmatli foydalanuvchi'}! 👋\n\n` +
+          `${bot.center.name} o'quv markazi botiga xush kelibsiz!\n` +
+          `Kurslarimiz haqida ma'lumot olish uchun /menu buyrug'ini yuboring.`;
+
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        welcomeMessage,
+      );
+      return;
+    }
+
+    // Start registration flow - set step to share_contact
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: 'share_contact' },
+    });
+
+    // Send welcome message with contact request button
     const welcomeMessage =
-      bot.welcomeMessage ||
       `Assalomu alaykum! ${bot.center.name} o'quv markazi botiga xush kelibsiz! 👋\n\n` +
-        `Kurslarimiz haqida ma'lumot olish uchun /menu buyrug'ini yuboring.`;
+      `Ro'yxatdan o'tish uchun telefon raqamingizni ulashing.`;
+
+    const keyboard = this.telegramApi.buildReplyKeyboard([
+      [{ text: '📱 Telefon raqamni ulashish', request_contact: true }],
+    ]);
 
     await this.sendMessageToUser(
       bot,
       telegramUser.chatId || '',
       welcomeMessage,
+      { reply_markup: keyboard },
     );
   }
 
@@ -848,6 +925,240 @@ export class TelegramService {
   }
 
   /**
+   * Handle contact message (for /start registration flow)
+   */
+  private async handleContactMessage(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    contact: NonNullable<TelegramMessage['contact']>,
+  ) {
+    this.logger.log(
+      `Contact shared by ${telegramUser.telegramId}: ${contact.phone_number}`,
+    );
+
+    // Check if user is in the correct step
+    if (telegramUser.userStep !== 'share_contact') {
+      this.logger.debug(
+        `User ${telegramUser.telegramId} shared contact but not in share_contact step`,
+      );
+      return;
+    }
+
+    // Format phone number (ensure it has country code)
+    let phoneNumber = contact.phone_number;
+    if (!phoneNumber.startsWith('+')) {
+      phoneNumber = '+' + phoneNumber;
+    }
+    // Remove non-digit characters except +
+    phoneNumber = phoneNumber.replace(/[^\d+]/g, '');
+
+    // Update TelegramUser with phone number and advance to next step
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: {
+        phoneNumber,
+        userStep: 'input_first_name',
+      },
+    });
+
+    // Remove the keyboard and ask for first name
+    await this.sendMessageToUser(
+      bot,
+      telegramUser.chatId || '',
+      `✅ Telefon raqam qabul qilindi: ${phoneNumber}\n\nEndi ismingizni kiriting:`,
+      { reply_markup: this.telegramApi.buildRemoveKeyboard() },
+    );
+  }
+
+  /**
+   * Handle first name input (for /start registration flow)
+   */
+  private async handleStartRegistrationFirstName(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    text: string,
+  ) {
+    const firstName = text.trim();
+
+    if (firstName.length < 2) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Iltimos, ismingizni to'liq kiriting (kamida 2 harf).",
+      );
+      return;
+    }
+
+    // Update TelegramUser with first name and advance to last name step
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: {
+        firstName,
+        userStep: 'input_last_name',
+      },
+    });
+
+    await this.sendMessageToUser(
+      bot,
+      telegramUser.chatId || '',
+      `✅ Rahmat, ${firstName}!\n\nEndi familiyangizni kiriting:`,
+    );
+  }
+
+  /**
+   * Handle last name input (for /start registration flow)
+   * Creates User and Student records upon completion
+   */
+  private async handleStartRegistrationLastName(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    text: string,
+  ) {
+    const lastName = text.trim();
+
+    if (lastName.length < 2) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Iltimos, familiyangizni to'liq kiriting (kamida 2 harf).",
+      );
+      return;
+    }
+
+    // Reload telegramUser to get latest phoneNumber and firstName
+    const freshTelegramUser = await this.prisma.telegramUser.findUnique({
+      where: { id: telegramUser.id },
+    });
+
+    if (!freshTelegramUser || !freshTelegramUser.phoneNumber) {
+      this.logger.error(
+        `TelegramUser ${telegramUser.id} missing phone number for registration`,
+      );
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Xatolik yuz berdi. Iltimos, /start buyrug'ini qayta yuboring.",
+      );
+      return;
+    }
+
+    // Generate random password
+    const password = this.generateRandomPassword();
+
+    try {
+      // Check if user with this phone number already exists
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          phoneNumber: freshTelegramUser.phoneNumber,
+          isDeleted: false,
+        },
+      });
+
+      if (existingUser) {
+        // Link existing user to this telegram user
+        await this.prisma.$transaction(async (tx) => {
+          // Update existing user to link with telegram
+          await tx.user.update({
+            where: { id: existingUser.id },
+            data: {
+              telegramUserId: telegramUser.id,
+              authProvider: 'telegram',
+            },
+          });
+
+          // Clear the userStep
+          await tx.telegramUser.update({
+            where: { id: telegramUser.id },
+            data: {
+              lastName,
+              userStep: null,
+            },
+          });
+        });
+
+        await this.sendMessageToUser(
+          bot,
+          telegramUser.chatId || '',
+          `✅ Muvaffaqiyatli ulandi!\n\n` +
+            `Siz allaqachon tizimda ro'yxatdan o'tgansiz.\n` +
+            `Telegram hisobingiz profilingizga ulandi.\n\n` +
+            `/menu - Kurslarni ko'rish`,
+        );
+        return;
+      }
+
+      // Create new User and Student in a transaction
+      await this.prisma.$transaction(async (tx) => {
+        // Create User with STUDENT role
+        const newUser = await tx.user.create({
+          data: {
+            firstName: freshTelegramUser.firstName || '',
+            lastName,
+            phoneNumber: freshTelegramUser.phoneNumber as string,
+            password, // In production, should be hashed
+            userType: UserType.STUDENT,
+            authProvider: 'telegram',
+            centerId: bot.centerId,
+            telegramUserId: telegramUser.id,
+          },
+        });
+
+        // Create Student record
+        await tx.student.create({
+          data: {
+            userId: newUser.id,
+            centerId: bot.centerId,
+            firstName: freshTelegramUser.firstName || '',
+            lastName,
+          },
+        });
+
+        // Clear the userStep
+        await tx.telegramUser.update({
+          where: { id: telegramUser.id },
+          data: {
+            lastName,
+            userStep: null,
+          },
+        });
+
+        this.logger.log(
+          `Created User ${newUser.id} and Student for TelegramUser ${telegramUser.id}`,
+        );
+      });
+
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `✅ Ro'yxatdan o'tdingiz!\n\n` +
+          `👤 Ism: ${freshTelegramUser.firstName} ${lastName}\n` +
+          `📱 Telefon: ${freshTelegramUser.phoneNumber}\n\n` +
+          `Kurslarimiz haqida ma'lumot olish uchun /menu buyrug'ini yuboring.`,
+      );
+    } catch (error) {
+      this.logger.error(`Error creating user: ${error}`);
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Ro'yxatdan o'tishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
+      );
+    }
+  }
+
+  /**
+   * Generate a random password for new users
+   */
+  private generateRandomPassword(): string {
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let password = '';
+    for (let i = 0; i < 8; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
+  }
+
+  /**
    * Handle regular text messages based on user state
    */
   private async handleRegularMessage(
@@ -870,6 +1181,22 @@ export class TelegramService {
 
     // Route to appropriate handler based on current step
     switch (currentStep) {
+      // /start registration flow steps
+      case 'share_contact':
+        // User sent text instead of sharing contact - remind them
+        await this.sendMessageToUser(
+          bot,
+          telegramUser.chatId || '',
+          'Iltimos, telefon raqamingizni ulashish uchun quyidagi tugmani bosing. 👇',
+        );
+        break;
+      case 'input_first_name':
+        await this.handleStartRegistrationFirstName(bot, telegramUser, text);
+        break;
+      case 'input_last_name':
+        await this.handleStartRegistrationLastName(bot, telegramUser, text);
+        break;
+      // Existing enrollment flow steps
       case 'enter_name':
         await this.handleNameEntry(bot, telegramUser, text);
         break;
