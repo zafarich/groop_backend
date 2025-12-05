@@ -662,7 +662,8 @@ model Enrollment {
   studentId       Int
   
   // Enrollment information
-  joinedAt        DateTime @default(now())
+  joinedAt        DateTime @default(now())      // When student clicked join link
+  lessonStartDate DateTime?                     // When lessons actually start (set by admin, used for proration)
   
   // Status
   status          EnrollmentStatus @default(ACTIVE)  // ACTIVE, FROZEN, EXPELLED, COMPLETED, DROPPED
@@ -672,9 +673,12 @@ model Enrollment {
   
   // Discount configuration (individual student discount - FIXED AMOUNT)
   individualDiscountAmount Decimal @db.Decimal(10, 2) @default(0.00)  // Fixed discount amount per month (e.g., 50000 UZS)
+  isRecurringDiscount      Boolean @default(true)   // true = monthly recurring, false = one-time (uses discountValidUntil)
+  isFreeEnrollment         Boolean @default(false)  // Student doesn't pay (explicit flag for clarity)
   
-  // Per-lesson pricing (effective price after discounts)
-  perLessonPrice  Decimal  @db.Decimal(10, 2)  // Current effective price per lesson
+  // Per-lesson pricing
+  baseLessonPrice Decimal  @db.Decimal(10, 2)  // Lesson price from group (before individual discount)
+  perLessonPrice  Decimal  @db.Decimal(10, 2)  // Current effective price per lesson (after discounts)
   
   // Discount validity (for multi-month prepaid or temporary discounts)
   discountValidUntil DateTime?  // When the special discount expires
@@ -736,6 +740,10 @@ model Payment {
   // For LESSON_BASED payments
   lessonsIncluded Int?     // Bu to'lovga nechta dars kiradi
   lessonPrice     Decimal? @db.Decimal(10, 2)  // Bir dars narxi
+  lessonsInPeriod Int?     // Total lessons in this payment period (for refund calculations)
+  lessonsMissed   Int?     // Lessons already passed before student joined (proration)
+  discountApplied Decimal? @db.Decimal(10, 2)  // Discount amount applied at payment time (audit trail)
+  isProrated      Boolean  @default(false)     // True if this is a prorated first payment (mid-course join)
   
   // Status
   status          PaymentStatus @default(PENDING)  // PENDING, PAID, OVERDUE, CANCELLED, REFUNDED
@@ -960,6 +968,7 @@ enum PaymentStatus {
 }
 
 enum EnrollmentStatus {
+  LEAD       // Joined via link, waiting for admin to activate
   ACTIVE
   FROZEN
   EXPELLED

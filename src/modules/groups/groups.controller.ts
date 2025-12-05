@@ -11,134 +11,72 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { GroupsService } from './groups.service';
-import { CreateGroupDto, UpdateGroupDto } from './dto';
+import { CreateGroupDto, UpdateGroupDto, FilterGroupsDto } from './dto';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { CenterOwnershipGuard } from '../../common/guards/center-ownership.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { CheckCenterOwnership } from '../../common/decorators/check-center-ownership.decorator';
 import { ActiveCenterId } from '../../common/decorators/active-center.decorator';
 
 @Controller('groups')
+@UseGuards(JwtAuthGuard, PermissionsGuard, CenterOwnershipGuard)
 export class GroupsController {
   constructor(private readonly groupsService: GroupsService) {}
 
-  /**
-   * Create a new group
-   */
   @Post()
-  async create(
+  @RequirePermissions('group.create')
+  create(
     @Body() createGroupDto: CreateGroupDto,
     @ActiveCenterId() activeCenterId: number,
   ) {
-    const group = await this.groupsService.create(
-      createGroupDto,
-      activeCenterId,
-    );
-    return {
-      success: true,
-      code: 0,
-      data: group,
-      message: 'Group created successfully',
-      setupInstructions: {
-        message: 'Group created. To activate it, complete the following steps:',
-        steps: [
-          'Create a separate Telegram group for this course',
-          'Add your bot to the Telegram group and grant it admin permissions',
-          `Send the command /connect ${group.connectToken} to the Telegram group`,
-          'Only after these steps are completed, the group becomes fully active.',
-        ],
-        connectToken: group.connectToken,
-        tokenExpires: group.connectTokenExpires,
-      },
-    };
+    return this.groupsService.create(createGroupDto, activeCenterId);
   }
 
-  /**
-   * Get all groups
-   */
   @Get()
-  async findAll(
-    @Query('centerId', ParseIntPipe) centerId?: number,
-    @Query('status') status?: string,
+  @RequirePermissions('group.read')
+  findAll(
+    @ActiveCenterId() activeCenterId: number,
+    @Query() filterDto: FilterGroupsDto,
   ) {
-    const groups = await this.groupsService.findAll(centerId, { status });
-    return {
-      success: true,
-      code: 0,
-      data: groups,
-      message: 'Groups retrieved successfully',
-    };
+    return this.groupsService.findAll(activeCenterId, filterDto);
   }
 
-  /**
-   * Get single group
-   */
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    const group = await this.groupsService.findOne(id);
-    return {
-      success: true,
-      code: 0,
-      data: group,
-      message: 'Group retrieved successfully',
-    };
+  @RequirePermissions('group.read')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.groupsService.findOne(id);
   }
 
-  /**
-   * Update group
-   */
   @Patch(':id')
-  async update(
+  @RequirePermissions('group.update')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateGroupDto: UpdateGroupDto,
   ) {
-    const group = await this.groupsService.update(id, updateGroupDto);
-    return {
-      success: true,
-      code: 0,
-      data: group,
-      message: 'Group updated successfully',
-    };
+    return this.groupsService.update(id, updateGroupDto);
   }
 
-  /**
-   * Delete group (soft delete)
-   */
   @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    await this.groupsService.remove(id);
-    return {
-      success: true,
-      code: 0,
-      data: null,
-      message: 'Group deleted successfully',
-    };
+  @RequirePermissions('group.delete')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.groupsService.remove(id);
   }
 
-  /**
-   * Regenerate connect token for a group
-   */
   @Post(':id/regenerate-token')
-  async regenerateToken(@Param('id', ParseIntPipe) id: number) {
-    const group = await this.groupsService.regenerateConnectToken(id);
-    return {
-      success: true,
-      code: 0,
-      data: {
-        connectToken: group.connectToken,
-        connectTokenExpires: group.connectTokenExpires,
-      },
-      message: 'Connection token regenerated successfully',
-    };
+  @RequirePermissions('group.update')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  regenerateToken(@Param('id', ParseIntPipe) id: number) {
+    return this.groupsService.regenerateConnectToken(id);
   }
 
-  /**
-   * Get group connection status
-   */
   @Get(':id/connection-status')
-  async getConnectionStatus(@Param('id', ParseIntPipe) id: number) {
-    const status = await this.groupsService.getConnectionStatus(id);
-    return {
-      success: true,
-      code: 0,
-      data: status,
-      message: 'Connection status retrieved successfully',
-    };
+  @RequirePermissions('group.read')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  getConnectionStatus(@Param('id', ParseIntPipe) id: number) {
+    return this.groupsService.getConnectionStatus(id);
   }
 }

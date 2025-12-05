@@ -9,7 +9,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { TelegramApiService } from '../center-bot/telegram-api.service';
 import { BotPermissionsService } from './services/bot-permissions.service';
 import { EventsGateway } from '../events/events.gateway';
-import { CreateGroupDto, UpdateGroupDto } from './dto';
+import { CreateGroupDto, UpdateGroupDto, FilterGroupsDto } from './dto';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -173,27 +173,58 @@ export class GroupsService {
         `${createGroupDto.discounts?.length || 0} discount(s)`,
     );
 
-    return group;
+    return {
+      success: true,
+      code: 0,
+      data: group,
+      message: 'Group created successfully',
+      setupInstructions: {
+        message: 'Group created. To activate it, complete the following steps:',
+        steps: [
+          'Create a separate Telegram group for this course',
+          'Add your bot to the Telegram group and grant it admin permissions',
+          `Send the command /connect ${group.connectToken} to the Telegram group`,
+          'Only after these steps are completed, the group becomes fully active.',
+        ],
+        connectToken: group.connectToken,
+        tokenExpires: group.connectTokenExpires,
+      },
+    };
   }
 
   /**
-   * Find all groups with filters
+   * Find all groups with filters and pagination
    */
-  async findAll(centerId?: number, filters?: { status?: string }) {
+  async findAll(centerId: number, filterDto: FilterGroupsDto) {
+    const { search, status, page = 1, limit = 10 } = filterDto;
+    const skip = (page - 1) * limit;
+
     const where: Prisma.GroupWhereInput = {
+      centerId,
       isDeleted: false,
     };
 
-    if (centerId) {
-      where.centerId = centerId;
+    // Add status filter if provided
+    if (status) {
+      where.status = status as any;
     }
 
-    if (filters?.status) {
-      where.status = filters.status as any;
+    // Add search filter if provided
+    if (search) {
+      where.name = {
+        contains: search,
+        mode: 'insensitive',
+      };
     }
 
-    return this.prisma.group.findMany({
+    // Get total count for pagination
+    const total = await this.prisma.group.count({ where });
+
+    // Get paginated groups
+    const groups = await this.prisma.group.findMany({
       where,
+      skip,
+      take: limit,
       include: {
         groupDiscounts: {
           where: { isDeleted: false },
@@ -203,17 +234,33 @@ export class GroupsService {
             teacher: true,
           },
         },
+        lessonSchedules: {
+          orderBy: { dayOfWeek: 'asc' },
+        },
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
+
+    return {
+      success: true,
+      code: 0,
+      data: groups,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      message: 'Groups retrieved successfully',
+    };
   }
 
   /**
-   * Find one group by ID
+   * Find one group by ID (internal use - returns raw group)
    */
-  async findOne(id: number) {
+  private async findOneRaw(id: number) {
     const group = await this.prisma.group.findUnique({
       where: { id, isDeleted: false },
       include: {
@@ -239,12 +286,26 @@ export class GroupsService {
   }
 
   /**
+   * Find one group by ID
+   */
+  async findOne(id: number) {
+    const group = await this.findOneRaw(id);
+
+    return {
+      success: true,
+      code: 0,
+      data: group,
+      message: 'Group retrieved successfully',
+    };
+  }
+
+  /**
    * Update group basic information
    * Note: Teachers, schedules, and discounts should be updated through dedicated endpoints
    */
   async update(id: number, updateGroupDto: UpdateGroupDto) {
     // Check if group exists
-    await this.findOne(id);
+    await this.findOneRaw(id);
 
     // Extract only the basic fields, excluding nested entities
     const {
@@ -254,7 +315,7 @@ export class GroupsService {
       ...basicFields
     } = updateGroupDto as any;
 
-    return this.prisma.group.update({
+    const group = await this.prisma.group.update({
       where: { id },
       data: basicFields,
       include: {
@@ -269,21 +330,35 @@ export class GroupsService {
         lessonSchedules: true,
       },
     });
+
+    return {
+      success: true,
+      code: 0,
+      data: group,
+      message: 'Group updated successfully',
+    };
   }
 
   /**
    * Soft delete group
    */
   async remove(id: number) {
-    await this.findOne(id);
+    await this.findOneRaw(id);
 
-    return this.prisma.group.update({
+    await this.prisma.group.update({
       where: { id },
       data: {
         isDeleted: true,
         deletedAt: new Date(),
       },
     });
+
+    return {
+      success: true,
+      code: 0,
+      data: null,
+      message: 'Group deleted successfully',
+    };
   }
 
   /**
@@ -436,7 +511,7 @@ export class GroupsService {
    * Regenerate connect token for a group (if expired or lost)
    */
   async regenerateConnectToken(groupId: number) {
-    const group = await this.findOne(groupId);
+    const group = await this.findOneRaw(groupId);
 
     if (group.status === 'ACTIVE') {
       throw new BadRequestException(
@@ -448,7 +523,7 @@ export class GroupsService {
     const connectTokenExpires = new Date();
     connectTokenExpires.setDate(connectTokenExpires.getDate() + 7);
 
-    return this.prisma.group.update({
+    const updated = await this.prisma.group.update({
       where: { id: groupId },
       data: { connectToken, connectTokenExpires },
       select: {
@@ -459,24 +534,39 @@ export class GroupsService {
         connectTokenExpires: true,
       },
     });
+
+    return {
+      success: true,
+      code: 0,
+      data: {
+        connectToken: updated.connectToken,
+        connectTokenExpires: updated.connectTokenExpires,
+      },
+      message: 'Connection token regenerated successfully',
+    };
   }
 
   /**
    * Get connection status for a group
    */
   async getConnectionStatus(id: number) {
-    const group = await this.findOne(id);
+    const group = await this.findOneRaw(id);
 
     return {
-      groupId: group.id,
-      status: group.status,
-      isConnected: !!group.telegramGroupId,
-      telegramGroupId: group.telegramGroupId,
-      joinLink: group.joinLink,
-      connectToken: group.status === 'PENDING' ? group.connectToken : null,
-      connectTokenExpires:
-        group.status === 'PENDING' ? group.connectTokenExpires : null,
-      connectedAt: group.updatedAt,
+      success: true,
+      code: 0,
+      data: {
+        groupId: group.id,
+        status: group.status,
+        isConnected: !!group.telegramGroupId,
+        telegramGroupId: group.telegramGroupId,
+        joinLink: group.joinLink,
+        connectToken: group.status === 'PENDING' ? group.connectToken : null,
+        connectTokenExpires:
+          group.status === 'PENDING' ? group.connectTokenExpires : null,
+        connectedAt: group.updatedAt,
+      },
+      message: 'Connection status retrieved successfully',
     };
   }
 }

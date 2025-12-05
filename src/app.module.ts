@@ -18,6 +18,7 @@ import { PaymentCardModule } from './modules/payment-card/payment-card.module';
 import { TeachersModule } from './modules/teachers/teachers.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { EventsModule } from './modules/events/events.module';
+import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { EventsModule } from './modules/events/events.module';
     TeachersModule,
     GroupsModule,
     EventsModule,
+    EnrollmentsModule,
   ],
   controllers: [AppController],
   providers: [
