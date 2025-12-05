@@ -351,48 +351,11 @@ export class TelegramService {
         await this.promptShareContact(bot, telegramUser);
         return;
       } else {
-        // For group chat: Create TelegramUser with Telegram profile data
-        // And auto-create linked User with generated phone
-        telegramUser = await this.prisma.telegramUser.create({
-          data: {
-            telegramId,
-            centerId: bot.centerId,
-            username: message.from.username || null,
-            firstName: message.from.first_name || null,
-            lastName: message.from.last_name || null,
-            languageCode: message.from.language_code || null,
-            chatId,
-            isBot: message.from.is_bot || false,
-            status: 'active',
-          },
-          include: { user: true },
-        });
-
-        // Generate a default phone number for group users
-        const defaultPhoneNumber = `998${telegramId.slice(-9).padStart(9, '0')}`;
-
-        const userData = buildUserData({
-          firstName: message.from.first_name || null,
-          lastName: message.from.last_name || null,
-          phoneNumber: defaultPhoneNumber,
-          centerId: bot.centerId,
-          userType: UserType.STUDENT,
-          authProvider: 'telegram',
-          telegramUserId: telegramUser.id,
-          username: message.from.username,
-        });
-
-        await this.prisma.user.create({ data: userData });
-
+        // For group chat: Do nothing - group messages don't trigger user creation
         this.logger.log(
-          `Created new TelegramUser and linked User for group chat`,
+          `Ignoring message from group chat for new user ${telegramId}`,
         );
-
-        // Reload with user relation
-        telegramUser = (await this.prisma.telegramUser.findUnique({
-          where: { id: telegramUser.id },
-          include: { user: true },
-        })) as TelegramUserWithUser;
+        return;
       }
     } else {
       // CASE 2: Telegram user already exists
@@ -460,54 +423,11 @@ export class TelegramService {
           return;
         }
       } else {
-        // For group chat: Ensure linked User exists
-        if (!telegramUser.user && bot.centerId) {
-          // Check if user with telegramUserId already exists
-          const existingUser = await this.prisma.user.findFirst({
-            where: { telegramUserId: telegramUser.id, isDeleted: false },
-          });
-
-          if (!existingUser) {
-            // Check if user with phone number exists
-            const phoneNumber =
-              telegramUser.phoneNumber ||
-              `998${telegramId.slice(-9).padStart(9, '0')}`;
-
-            const existingUserByPhone = await this.prisma.user.findFirst({
-              where: { phoneNumber, isDeleted: false },
-            });
-
-            if (existingUserByPhone) {
-              // Link existing user
-              await this.prisma.user.update({
-                where: { id: existingUserByPhone.id },
-                data: {
-                  telegramUserId: telegramUser.id,
-                  authProvider: 'telegram',
-                },
-              });
-            } else {
-              // Create new user
-              const userData = buildUserData({
-                firstName: telegramUser.firstName || null,
-                lastName: telegramUser.lastName || null,
-                phoneNumber,
-                centerId: bot.centerId,
-                userType: UserType.STUDENT,
-                authProvider: 'telegram',
-                telegramUserId: telegramUser.id,
-                username: telegramUser.username,
-              });
-              await this.prisma.user.create({ data: userData });
-            }
-          }
-
-          // Reload with user relation
-          telegramUser = (await this.prisma.telegramUser.findUnique({
-            where: { id: telegramUser.id },
-            include: { user: true },
-          })) as TelegramUserWithUser;
-        }
+        // For group chat: Do nothing - ignore group messages
+        this.logger.log(
+          `Ignoring message from group chat for existing user ${telegramId}`,
+        );
+        return;
       }
     }
 
