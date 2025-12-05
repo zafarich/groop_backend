@@ -697,14 +697,13 @@ export class TelegramService {
         bot.botToken,
       );
 
-      // 4. Send success message with join link
+      // 4. Send success message (join link will be sent to students after payment approval)
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
         `✅ Muvaffaqiyatli ulandi!\n\n` +
-          `📚 Guruh: ${result.name}\n` +
-          `🔗 Join link: ${result.joinLink}\n\n` +
-          `Endi o'quvchilar ushbu link orqali guruhga qo'shilishlari mumkin!`,
+          `📚 Guruh: ${result.name}\n\n` +
+          `Telegram guruh tizim guruhiga muvaffaqiyatli bog'landi.`,
       );
 
       this.logger.log(

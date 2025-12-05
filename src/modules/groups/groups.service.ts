@@ -308,13 +308,13 @@ export class GroupsService {
     });
 
     if (!group) {
-      throw new NotFoundException('Invalid or expired connection token');
+      throw new NotFoundException('Token eskirgan yoki ishlatilgan');
     }
 
     // 2. Check token expiration
     if (group.connectTokenExpires && group.connectTokenExpires < new Date()) {
       throw new BadRequestException(
-        'Connection token has expired. Please regenerate a new token from the admin panel.',
+        'Token eskirgan yoki ishlatilgan. Iltimos, admin paneldan yangi token oling.',
       );
     }
 
@@ -329,7 +329,7 @@ export class GroupsService {
 
     if (existingConnection) {
       throw new ConflictException(
-        `This Telegram group is already connected to another group (ID: ${existingConnection.id})`,
+        `Bu Telegram guruh biror bir guruhga bog'liq`,
       );
     }
 
@@ -349,34 +349,8 @@ export class GroupsService {
 
     this.logger.log('✅ Bot has all required permissions');
 
-    // 4. Generate join link with retry logic
-    this.logger.log('Generating join link...');
-    const joinLinkResult = await this.telegramApi.retryWithDelay(
-      async () => {
-        const result = await this.telegramApi.createChatInviteLink(
-          botToken,
-          chatId,
-          {
-            name: `Join ${group.name}`,
-            creates_join_request: false,
-          },
-        );
-
-        if (!result.ok || !result.result?.invite_link) {
-          throw new Error(
-            `Failed to create invite link: ${result.description || 'Unknown error'}`,
-          );
-        }
-
-        return result.result.invite_link;
-      },
-      3, // 3 attempts
-      500, // 500ms initial delay
-    );
-
-    this.logger.log(`✅ Join link generated: ${joinLinkResult}`);
-
-    // 5. Update group in transaction (atomicity guaranteed)
+    // 4. Update group in transaction (atomicity guaranteed)
+    // Note: Join link will be generated later when student payment is approved
     const updatedGroup = await this.prisma.$transaction(async (tx) => {
       // Double-check telegram group ID uniqueness inside transaction
       const conflictCheck = await tx.group.findFirst({
@@ -393,12 +367,11 @@ export class GroupsService {
         );
       }
 
-      // Update the group
+      // Update the group (joinLink will be set later when student payment is approved)
       return tx.group.update({
         where: { id: group.id },
         data: {
           telegramGroupId: chatId,
-          joinLink: joinLinkResult,
           status: 'ACTIVE',
           connectToken: null, // Clear token after successful connection
           connectTokenExpires: null,
@@ -421,13 +394,13 @@ export class GroupsService {
       `✅ Group ${group.id} successfully connected to Telegram group ${chatId}`,
     );
 
-    // 6. Emit WebSocket event to admin panel
+    // 5. Emit WebSocket event to admin panel
     try {
-      if (updatedGroup.joinLink && updatedGroup.telegramGroupId) {
+      if (updatedGroup.telegramGroupId) {
         this.eventsGateway.emitGroupConnected(
           updatedGroup.centerId,
           updatedGroup.id,
-          updatedGroup.joinLink,
+          updatedGroup.joinLink || '', // joinLink will be null at this point
           updatedGroup.telegramGroupId,
         );
         this.logger.log(
