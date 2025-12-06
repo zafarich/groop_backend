@@ -666,7 +666,7 @@ model Enrollment {
   lessonStartDate DateTime?                     // When lessons actually start (set by admin, used for proration)
   
   // Status
-  status          EnrollmentStatus @default(ACTIVE)  // ACTIVE, FROZEN, EXPELLED, COMPLETED, DROPPED
+  status          EnrollmentStatus @default(LEAD)  // ACTIVE, FROZEN, EXPELLED, COMPLETED, DROPPED
   
   // Balance tracking
   balance         Decimal  @db.Decimal(10, 2) @default(0.00)  // Positive = overpaid, Negative = debt

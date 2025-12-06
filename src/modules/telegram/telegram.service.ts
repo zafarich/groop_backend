@@ -645,7 +645,7 @@ export class TelegramService {
               where: { userId: telegramUserWithUser.user.id },
             })
           ).id,
-          status: 'ACTIVE', // Or PENDING/LEAD based on requirements, using active as lead
+          status: 'LEAD', // Initial status for bot joiners
           joinedAt: new Date(),
           // Initialize prices (required fields)
           baseLessonPrice: group.monthlyPrice, // Default to monthly price for now
