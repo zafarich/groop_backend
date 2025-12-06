@@ -1,7 +1,6 @@
 import {
   IsNumber,
   Min,
-  IsBoolean,
   IsOptional,
   IsDateString,
 } from 'class-validator';
@@ -9,12 +8,13 @@ import {
 export class AssignDiscountDto {
   @IsNumber()
   @Min(0)
-  discountAmount: number;
-
-  @IsBoolean()
-  isRecurring: boolean;
+  customMonthlyPrice: number; // Actual price student pays (0 = free)
 
   @IsOptional()
   @IsDateString()
-  validUntil?: string; // Required if isRecurring = false
+  discountStartDate?: string; // When custom price becomes active
+
+  @IsOptional()
+  @IsDateString()
+  discountEndDate?: string; // When custom price expires (after this, group price applies)
 }

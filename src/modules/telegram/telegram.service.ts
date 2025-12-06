@@ -530,6 +530,23 @@ export class TelegramService {
 
     const data = callbackQuery.data;
     const chatId = callbackQuery.message.chat.id;
+    const telegramId = callbackQuery.from.id.toString();
+
+    // Get telegram user
+    const telegramUser = await this.prisma.telegramUser.findUnique({
+      where: { telegramId },
+      include: { user: true },
+    });
+
+    if (!telegramUser) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        'Xatolik: Foydalanuvchi topilmadi',
+        true,
+      );
+      return;
+    }
 
     // Answer callback query immediately
     await this.telegramApi.answerCallbackQuery(
@@ -543,6 +560,22 @@ export class TelegramService {
     const [action, ...params] = data.split(':');
 
     switch (action) {
+      case 'pay':
+        await this.handlePaymentCallback(
+          bot,
+          telegramUser as TelegramUserWithUser,
+          chatId,
+          params,
+        );
+        break;
+      case 'trial':
+        await this.handleTrialCallback(
+          bot,
+          telegramUser as TelegramUserWithUser,
+          chatId,
+          params,
+        );
+        break;
       case 'send_receipt':
         await this.handleSendReceiptButton(bot, chatId, params);
         break;
@@ -551,6 +584,281 @@ export class TelegramService {
         break;
       default:
         this.logger.warn(`Unknown callback action: ${action}`);
+    }
+  }
+
+  /**
+   * Handle payment callback (user selected payment option)
+   */
+  private async handlePaymentCallback(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    chatId: number,
+    params: string[],
+  ) {
+    const groupId = parseInt(params[0], 10);
+    const months = parseInt(params[1], 10);
+
+    if (isNaN(groupId) || isNaN(months)) {
+      await this.sendMessageToUser(bot, chatId, '❌ Xatolik yuz berdi.');
+      return;
+    }
+
+    // Get group with discounts
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId, isDeleted: false },
+      include: {
+        groupDiscounts: {
+          where: { isDeleted: false, months },
+        },
+      },
+    });
+
+    if (!group) {
+      await this.sendMessageToUser(bot, chatId, '❌ Guruh topilmadi.');
+      return;
+    }
+
+    // Calculate total amount
+    const monthlyPrice = Number(group.monthlyPrice);
+    let totalAmount = monthlyPrice * months;
+    let discountAmount = 0;
+
+    if (months > 1 && group.groupDiscounts.length > 0) {
+      discountAmount = Number(group.groupDiscounts[0].discountAmount);
+      totalAmount = monthlyPrice * months - discountAmount;
+    }
+
+    // Format price
+    const formatPrice = (price: number) => {
+      return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    };
+
+    // Save payment intent to StudentBotState
+    await this.prisma.studentBotState.upsert({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      update: {
+        groupId,
+        selectedMonths: months,
+        currentStep: 'waiting_receipt',
+        metadata: {
+          totalAmount,
+          discountAmount,
+          monthlyPrice,
+        },
+      },
+      create: {
+        telegramUserId: telegramUser.id,
+        centerId: bot.centerId,
+        groupId,
+        selectedMonths: months,
+        currentStep: 'waiting_receipt',
+        metadata: {
+          totalAmount,
+          discountAmount,
+          monthlyPrice,
+        },
+      },
+    });
+
+    // Update telegram user step
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: 'waiting_receipt' },
+    });
+
+    // Get payment cards for the center
+    const paymentCards = await this.prisma.centerPaymentCard.findMany({
+      where: {
+        centerId: bot.centerId,
+        isActive: true,
+        isVisible: true,
+        isDeleted: false,
+      },
+      orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
+    });
+
+    let message = `💳 <b>To'lov ma'lumotlari</b>\n\n`;
+    message += `📚 Guruh: ${group.name}\n`;
+    message += `📅 Davr: ${months} oy\n`;
+    message += `💰 Summa: <b>${formatPrice(totalAmount)} so'm</b>\n\n`;
+
+    if (paymentCards.length > 0) {
+      message += `<b>To'lov kartasi:</b>\n`;
+      paymentCards.forEach((card) => {
+        message += `💳 <code>${card.cardNumber}</code>\n`;
+        message += `👤 ${card.cardHolder}\n`;
+        if (card.bankName) {
+          message += `🏦 ${card.bankName}\n`;
+        }
+        message += `\n`;
+      });
+    }
+
+    message += `📸 <b>To'lovni amalga oshirgandan so'ng, chek rasmini yuboring.</b>`;
+
+    await this.sendMessageToUser(bot, chatId, message, {
+      parse_mode: 'HTML',
+    });
+  }
+
+  /**
+   * Handle trial lesson callback (user wants to join trial)
+   */
+  private async handleTrialCallback(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    chatId: number,
+    params: string[],
+  ) {
+    const groupId = parseInt(params[0], 10);
+
+    if (isNaN(groupId)) {
+      await this.sendMessageToUser(bot, chatId, '❌ Xatolik yuz berdi.');
+      return;
+    }
+
+    // Check if user is registered
+    if (!telegramUser.user) {
+      await this.sendMessageToUser(
+        bot,
+        chatId,
+        "❌ Sinov darsida qatnashish uchun avval ro'yxatdan o'tishingiz kerak.",
+      );
+      return;
+    }
+
+    // Get group
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId, isDeleted: false, status: 'ACTIVE' },
+    });
+
+    if (!group) {
+      await this.sendMessageToUser(bot, chatId, '❌ Guruh topilmadi.');
+      return;
+    }
+
+    if (!group.telegramGroupId) {
+      await this.sendMessageToUser(
+        bot,
+        chatId,
+        '❌ Bu guruh hali Telegram guruhga ulanmagan.',
+      );
+      return;
+    }
+
+    // Get student record
+    const student = await this.prisma.student.findFirst({
+      where: { userId: telegramUser.user.id, isDeleted: false },
+    });
+
+    if (!student) {
+      await this.sendMessageToUser(
+        bot,
+        chatId,
+        "❌ Talaba ma'lumotlari topilmadi.",
+      );
+      return;
+    }
+
+    // Check if already enrolled
+    const existingEnrollment = await this.prisma.enrollment.findUnique({
+      where: {
+        groupId_studentId: {
+          groupId: group.id,
+          studentId: student.id,
+        },
+      },
+    });
+
+    if (existingEnrollment && existingEnrollment.status === 'ACTIVE') {
+      await this.sendMessageToUser(
+        bot,
+        chatId,
+        "✅ Siz bu guruhda allaqachon faol a'zosiz!",
+      );
+      return;
+    }
+
+    if (existingEnrollment && existingEnrollment.status === 'TRIAL') {
+      await this.sendMessageToUser(
+        bot,
+        chatId,
+        '✅ Siz allaqachon sinov darsida qatnashyapsiz!',
+      );
+      return;
+    }
+
+    try {
+      // Create one-time invite link for the Telegram group
+      const inviteLinkResponse = await this.telegramApi.createChatInviteLink(
+        bot.botToken,
+        group.telegramGroupId,
+        {
+          member_limit: 1, // One-time use
+          name: `Trial: ${telegramUser.user.firstName || 'Student'}`,
+        },
+      );
+
+      const result = inviteLinkResponse.result as
+        | { invite_link?: string }
+        | undefined;
+      if (!inviteLinkResponse.ok || !result?.invite_link) {
+        this.logger.error(
+          `Failed to create invite link: ${JSON.stringify(inviteLinkResponse)}`,
+        );
+        throw new Error('Failed to create invite link');
+      }
+
+      const inviteLink: string = result.invite_link;
+
+      // Create or update enrollment with TRIAL status
+      await this.prisma.enrollment.upsert({
+        where: {
+          groupId_studentId: {
+            groupId: group.id,
+            studentId: student.id,
+          },
+        },
+        create: {
+          groupId: group.id,
+          studentId: student.id,
+          status: 'TRIAL',
+          joinedAt: new Date(),
+          baseLessonPrice: group.monthlyPrice,
+          perLessonPrice: group.monthlyPrice,
+        },
+        update: {
+          status: 'TRIAL',
+        },
+      });
+
+      this.logger.log(
+        `Created trial enrollment for student ${student.id} in group ${group.id}`,
+      );
+
+      // Send invite link to user
+      let message = `🎓 <b>Sinov darsiga xush kelibsiz!</b>\n\n`;
+      message += `📚 Guruh: ${group.name}\n\n`;
+      message += `Quyidagi havola orqali Telegram guruhga qo'shiling:\n`;
+      message += `👉 ${inviteLink}\n\n`;
+      message += `<i>⚠️ Bu havola faqat 1 marta ishlaydi.</i>`;
+
+      await this.sendMessageToUser(bot, chatId, message, {
+        parse_mode: 'HTML',
+      });
+    } catch (error) {
+      this.logger.error(`Error creating trial enrollment: ${error}`);
+      await this.sendMessageToUser(
+        bot,
+        chatId,
+        "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+      );
     }
   }
 
@@ -724,28 +1032,87 @@ export class TelegramService {
     telegramUser: TelegramUserWithUser,
     group: any,
   ) {
-    let message = `📚 <b>${group.name}</b>\n\n`;
-    if (group.description) {
-      message += `📝 ${group.description}\n\n`;
-    }
-    message += `💰 Narx: ${parseInt(group.monthlyPrice)} so'm/oy\n`;
+    // Get teachers for the group
+    const groupTeachers = await this.prisma.groupTeacher.findMany({
+      where: { groupId: group.id },
+      include: {
+        teacher: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
-    // Add schedule info
+    // Get lesson schedules
     const schedules = await this.prisma.lessonSchedule.findMany({
       where: { groupId: group.id },
       orderBy: { dayOfWeek: 'asc' },
     });
 
-    if (schedules.length > 0) {
-      message += `📅 Dars vaqtlari:\n`;
-      const days = ['Yak', 'Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
-      schedules.forEach((s) => {
-        message += `• ${days[s.dayOfWeek % 7]}: ${s.startTime}-${s.endTime}\n`;
-      });
-      message += `\n`;
+    // Format price with spaces for thousands
+    const formatPrice = (price: number) => {
+      return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    };
+
+    // Build message
+    let message = `📚 <b>${group.name}</b>\n\n`;
+
+    if (group.description) {
+      message += `${group.description}\n\n`;
     }
 
-    message += `To'lov turini tanlang: 👇`;
+    // Price
+    message += `💰 <b>Narxi:</b> ${formatPrice(parseInt(group.monthlyPrice))} so'm\n`;
+
+    // Course start date
+    if (group.courseStartDate) {
+      const startDate = new Date(group.courseStartDate);
+      const formattedDate = startDate.toLocaleDateString('uz-UZ', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+      message += `📅 <b>Boshlanish vaqti:</b> ${formattedDate}\n`;
+    }
+
+    // Teachers
+    if (groupTeachers.length > 0) {
+      const teacherNames = groupTeachers.map((gt) => {
+        const t = gt.teacher;
+        const firstName = t.firstName || t.user?.firstName || '';
+        const lastName = t.lastName || t.user?.lastName || '';
+        return `${firstName} ${lastName}`.trim();
+      });
+      message += `👨‍🏫 <b>O'qituvchi${groupTeachers.length > 1 ? 'lar' : ''}:</b> ${teacherNames.join(', ')}\n`;
+    }
+
+    // Lesson schedule in compact format (Du - 10:00, Chor - 12:00, ...)
+    if (schedules.length > 0) {
+      const dayNames: { [key: number]: string } = {
+        1: 'Du',
+        2: 'Se',
+        3: 'Chor',
+        4: 'Pay',
+        5: 'Jum',
+        6: 'Shan',
+        7: 'Yak',
+      };
+      const scheduleStr = schedules
+        .map((s) => `${dayNames[s.dayOfWeek]} - ${s.startTime}`)
+        .join(', ');
+      message += `🕐 <b>Dars vaqti:</b> ${scheduleStr}\n`;
+    }
+
+    message += `\n<b>To'lov turini tanlang:</b> 👇`;
 
     // Build buttons
     const buttons: any[] = [];
@@ -753,12 +1120,12 @@ export class TelegramService {
     // Monthly payment button
     buttons.push([
       {
-        text: `1 oyga to'lov - ${parseInt(group.monthlyPrice)} so'm`,
-        callback_data: `pay_${group.id}_1`,
+        text: `💳 1 oyga to'lash - ${formatPrice(parseInt(group.monthlyPrice))} so'm`,
+        callback_data: `pay:${group.id}:1`,
       },
     ]);
 
-    // Discount buttons
+    // Multi-month discount buttons
     if (group.groupDiscounts && group.groupDiscounts.length > 0) {
       group.groupDiscounts.forEach((discount: any) => {
         const months = discount.months;
@@ -766,12 +1133,20 @@ export class TelegramService {
           Number(group.monthlyPrice) * months - Number(discount.discountAmount);
         buttons.push([
           {
-            text: `${months} oyga to'lov - ${total} so'm`,
-            callback_data: `pay_${group.id}_${months}`,
+            text: `💳 ${months} oyga to'lash - ${formatPrice(total)} so'm`,
+            callback_data: `pay:${group.id}:${months}`,
           },
         ]);
       });
     }
+
+    // Trial lesson button
+    buttons.push([
+      {
+        text: `🎓 Sinov darsida qatnashish`,
+        callback_data: `trial:${group.id}`,
+      },
+    ]);
 
     await this.sendMessageToUser(bot, telegramUser.chatId || '', message, {
       parse_mode: 'HTML',

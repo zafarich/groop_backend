@@ -666,22 +666,22 @@ model Enrollment {
   lessonStartDate DateTime?                     // When lessons actually start (set by admin, used for proration)
   
   // Status
-  status          EnrollmentStatus @default(LEAD)  // ACTIVE, FROZEN, EXPELLED, COMPLETED, DROPPED
+  status          EnrollmentStatus @default(LEAD)  // LEAD, TRIAL, ACTIVE, FROZEN, EXPELLED, COMPLETED, DROPPED
   
   // Balance tracking
   balance         Decimal  @db.Decimal(10, 2) @default(0.00)  // Positive = overpaid, Negative = debt
   
-  // Discount configuration (individual student discount - FIXED AMOUNT)
-  individualDiscountAmount Decimal @db.Decimal(10, 2) @default(0.00)  // Fixed discount amount per month (e.g., 50000 UZS)
-  isRecurringDiscount      Boolean @default(true)   // true = monthly recurring, false = one-time (uses discountValidUntil)
-  isFreeEnrollment         Boolean @default(false)  // Student doesn't pay (explicit flag for clarity)
+  // Custom pricing (individual discount per student)
+  // Admin enters the actual price student pays (e.g., 200000 = 200k UZS/month)
+  // null = use group's monthlyPrice, 0 = free enrollment
+  customMonthlyPrice  Decimal?  @db.Decimal(10, 2)  // Custom monthly price (null = group price, 0 = free)
+  discountStartDate   DateTime?                     // When custom price becomes active
+  discountEndDate     DateTime?                     // When custom price expires (after this, group price applies)
+  isFreeEnrollment    Boolean   @default(false)     // Explicit flag for 0 price (set when customMonthlyPrice = 0)
   
-  // Per-lesson pricing
+  // Per-lesson pricing (calculated based on current effective price)
   baseLessonPrice Decimal  @db.Decimal(10, 2)  // Lesson price from group (before individual discount)
   perLessonPrice  Decimal  @db.Decimal(10, 2)  // Current effective price per lesson (after discounts)
-  
-  // Discount validity (for multi-month prepaid or temporary discounts)
-  discountValidUntil DateTime?  // When the special discount expires
   
   // Payment tracking
   lastPaymentDate DateTime?
@@ -713,7 +713,7 @@ model Enrollment {
   @@index([status])
   @@index([balance])
   @@index([nextPaymentDate])
-  @@index([discountValidUntil])
+  @@index([discountEndDate])
   @@index([isDeleted])
   @@map("enrollments")
 }
@@ -969,7 +969,8 @@ enum PaymentStatus {
 
 enum EnrollmentStatus {
   LEAD       // Joined via link, waiting for admin to activate
-  ACTIVE
+  TRIAL      // In trial period (no payment required yet, balance may go negative)
+  ACTIVE     // Active student (paid or has balance)
   FROZEN
   EXPELLED
   COMPLETED

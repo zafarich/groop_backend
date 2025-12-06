@@ -19,9 +19,10 @@ export interface ProratedPriceResult {
   lessonsMissed: number;
   lessonsIncluded: number;
   baseLessonPrice: number;
-  effectiveLessonPrice: number; // After individual discount
+  effectiveLessonPrice: number; // After custom pricing
   proratedAmount: number;
   isProrated: boolean;
+  customPriceApplied: boolean; // Whether custom price was used
 }
 
 @Injectable()
@@ -255,17 +256,26 @@ export class EnrollmentsService {
   async getActivationPreview(enrollmentId: number, lessonStartDate: Date) {
     const enrollment = await this.findOneRaw(enrollmentId);
 
-    if (enrollment.status !== 'LEAD') {
+    if (enrollment.status !== 'LEAD' && enrollment.status !== 'TRIAL') {
       throw new BadRequestException(
         `Enrollment is already ${enrollment.status}. Cannot calculate activation preview.`,
       );
     }
 
+    // Get effective monthly price (custom or group price)
+    const effectiveMonthlyPrice = this.getEffectiveMonthlyPrice(
+      enrollment.customMonthlyPrice ? Number(enrollment.customMonthlyPrice) : null,
+      enrollment.discountStartDate,
+      enrollment.discountEndDate,
+      Number(enrollment.group.monthlyPrice),
+      lessonStartDate,
+    );
+
     const preview = this.calculateProratedPrice(
       enrollment.group,
       enrollment.group.lessonSchedules,
       lessonStartDate,
-      Number(enrollment.individualDiscountAmount) || 0,
+      effectiveMonthlyPrice,
     );
 
     return {
@@ -291,9 +301,9 @@ export class EnrollmentsService {
       throw new NotFoundException(`Enrollment not found`);
     }
 
-    if (enrollment.status !== 'LEAD') {
+    if (enrollment.status !== 'LEAD' && enrollment.status !== 'TRIAL') {
       throw new BadRequestException(
-        `Cannot activate enrollment with status ${enrollment.status}. Only LEAD enrollments can be activated.`,
+        `Cannot activate enrollment with status ${enrollment.status}. Only LEAD or TRIAL enrollments can be activated.`,
       );
     }
 
@@ -312,17 +322,32 @@ export class EnrollmentsService {
       );
     }
 
+    // Get effective monthly price (custom or group price)
+    const effectiveMonthlyPrice = this.getEffectiveMonthlyPrice(
+      enrollment.customMonthlyPrice ? Number(enrollment.customMonthlyPrice) : null,
+      enrollment.discountStartDate,
+      enrollment.discountEndDate,
+      Number(enrollment.group.monthlyPrice),
+      lessonStartDate,
+    );
+
     // Calculate proration
     const proration = this.calculateProratedPrice(
       enrollment.group,
       enrollment.group.lessonSchedules,
       lessonStartDate,
-      Number(enrollment.individualDiscountAmount) || 0,
+      effectiveMonthlyPrice,
     );
 
     // Check for free enrollment
     const isFree: boolean =
       proration.effectiveLessonPrice === 0 || enrollment.isFreeEnrollment;
+
+    // Calculate discount applied (difference from group price)
+    const groupMonthlyPrice = Number(enrollment.group.monthlyPrice);
+    const discountApplied = proration.customPriceApplied
+      ? groupMonthlyPrice - effectiveMonthlyPrice
+      : null;
 
     // Execute in transaction
     const result = await this.prisma.$transaction(async (tx) => {
@@ -356,8 +381,7 @@ export class EnrollmentsService {
             lessonsInPeriod: proration.totalLessonsInPeriod,
             lessonsMissed: proration.lessonsMissed,
             lessonPrice: proration.effectiveLessonPrice,
-            discountApplied:
-              Number(enrollment.individualDiscountAmount) || null,
+            discountApplied,
             isProrated: proration.isProrated,
             status: 'PENDING',
             dueDate: new Date(), // Due immediately
@@ -376,31 +400,40 @@ export class EnrollmentsService {
   }
 
   /**
-   * Assign or update individual discount for an enrollment
+   * Assign or update custom pricing for an enrollment
+   * @param enrollmentId - Enrollment ID
+   * @param dto - Custom price details (customMonthlyPrice, discountStartDate, discountEndDate)
    */
   async assignDiscount(enrollmentId: number, dto: AssignDiscountDto) {
     const enrollment = await this.findOneRaw(enrollmentId);
 
-    // Validate one-time discount has validUntil
-    if (!dto.isRecurring && !dto.validUntil) {
-      throw new BadRequestException(
-        `validUntil is required for one-time (non-recurring) discounts`,
-      );
-    }
+    // Determine if this is a free enrollment (customMonthlyPrice = 0)
+    const isFreeEnrollment = dto.customMonthlyPrice === 0;
 
-    // Calculate if this makes the student free
-    const monthlyPrice = Number(enrollment.group.monthlyPrice);
-    const isFreeEnrollment = dto.discountAmount >= monthlyPrice;
+    // Parse dates
+    const discountStartDate = dto.discountStartDate
+      ? new Date(dto.discountStartDate)
+      : null;
+    const discountEndDate = dto.discountEndDate
+      ? new Date(dto.discountEndDate)
+      : null;
 
     // Calculate new per-lesson price if enrollment is already active
     let perLessonPrice = Number(enrollment.perLessonPrice);
     if (enrollment.status === 'ACTIVE' && enrollment.lessonStartDate) {
-      const startDate = new Date(enrollment.lessonStartDate.getTime());
+      const effectiveMonthlyPrice = this.getEffectiveMonthlyPrice(
+        dto.customMonthlyPrice,
+        discountStartDate,
+        discountEndDate,
+        Number(enrollment.group.monthlyPrice),
+        new Date(), // Current date for checking validity
+      );
+
       const proration = this.calculateProratedPrice(
         enrollment.group,
         enrollment.group.lessonSchedules,
-        startDate,
-        dto.discountAmount,
+        enrollment.lessonStartDate,
+        effectiveMonthlyPrice,
       );
       perLessonPrice = proration.effectiveLessonPrice;
     }
@@ -408,9 +441,9 @@ export class EnrollmentsService {
     const updatedEnrollment = await this.prisma.enrollment.update({
       where: { id: enrollmentId },
       data: {
-        individualDiscountAmount: dto.discountAmount,
-        isRecurringDiscount: dto.isRecurring,
-        discountValidUntil: dto.validUntil ? new Date(dto.validUntil) : null,
+        customMonthlyPrice: dto.customMonthlyPrice,
+        discountStartDate,
+        discountEndDate,
         isFreeEnrollment,
         perLessonPrice,
       },
@@ -432,14 +465,51 @@ export class EnrollmentsService {
     });
 
     this.logger.log(
-      `Updated discount for enrollment ${enrollmentId}: ${dto.discountAmount} UZS, recurring: ${dto.isRecurring}`,
+      `Updated custom price for enrollment ${enrollmentId}: ${dto.customMonthlyPrice} UZS, ` +
+        `valid from ${dto.discountStartDate || 'now'} to ${dto.discountEndDate || 'forever'}`,
     );
 
-    return updatedEnrollment;
+    return {
+      success: true,
+      code: 0,
+      data: updatedEnrollment,
+      message: 'Custom price assigned successfully',
+    };
+  }
+
+  /**
+   * Get effective monthly price based on custom pricing and validity period
+   */
+  private getEffectiveMonthlyPrice(
+    customMonthlyPrice: number | null,
+    discountStartDate: Date | null,
+    discountEndDate: Date | null,
+    groupMonthlyPrice: number,
+    currentDate: Date,
+  ): number {
+    // If no custom price set, use group price
+    if (customMonthlyPrice === null) {
+      return groupMonthlyPrice;
+    }
+
+    // Check if custom price is within validity period
+    const isAfterStart = !discountStartDate || currentDate >= discountStartDate;
+    const isBeforeEnd = !discountEndDate || currentDate <= discountEndDate;
+
+    if (isAfterStart && isBeforeEnd) {
+      return customMonthlyPrice; // 0 for free, or custom amount
+    }
+
+    // Outside validity period, use group price
+    return groupMonthlyPrice;
   }
 
   /**
    * Calculate prorated price for a given start date
+   * @param group - Group with pricing and course dates
+   * @param schedules - Lesson schedules for the group
+   * @param lessonStartDate - When student's lessons start
+   * @param effectiveMonthlyPrice - The monthly price to use (custom or group price)
    */
   private calculateProratedPrice(
     group: {
@@ -449,7 +519,7 @@ export class EnrollmentsService {
     },
     schedules: LessonSchedule[],
     lessonStartDate: Date,
-    individualDiscount: number = 0,
+    effectiveMonthlyPrice: number,
   ): ProratedPriceResult {
     // Determine billing period (current month)
     const periodStart = new Date(
@@ -485,22 +555,21 @@ export class EnrollmentsService {
 
     const lessonsIncluded = totalLessonsInPeriod - lessonsMissed;
 
-    // Calculate prices
-    const monthlyPrice = Number(group.monthlyPrice);
+    // Calculate prices based on effective monthly price
+    const groupMonthlyPrice = Number(group.monthlyPrice);
+    const customPriceApplied = effectiveMonthlyPrice !== groupMonthlyPrice;
+
+    // Base lesson price (from group price, for reference)
     const baseLessonPrice =
       totalLessonsInPeriod > 0
-        ? Math.round(monthlyPrice / totalLessonsInPeriod)
+        ? Math.round(groupMonthlyPrice / totalLessonsInPeriod)
         : 0;
 
-    // Apply individual discount (proportional per lesson)
-    const discountPerLesson =
+    // Effective lesson price (from custom or group price)
+    const effectiveLessonPrice =
       totalLessonsInPeriod > 0
-        ? Math.round(individualDiscount / totalLessonsInPeriod)
+        ? Math.round(effectiveMonthlyPrice / totalLessonsInPeriod)
         : 0;
-    const effectiveLessonPrice = Math.max(
-      0,
-      baseLessonPrice - discountPerLesson,
-    );
 
     const proratedAmount = effectiveLessonPrice * lessonsIncluded;
     const isProrated = lessonsMissed > 0;
@@ -515,6 +584,7 @@ export class EnrollmentsService {
       effectiveLessonPrice,
       proratedAmount,
       isProrated,
+      customPriceApplied,
     };
   }
 
