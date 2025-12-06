@@ -9,7 +9,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { EnrollmentsService } from './enrollments.service';
-import { ActivateEnrollmentDto, AssignDiscountDto } from './dto';
+import {
+  ActivateEnrollmentDto,
+  AssignDiscountDto,
+  FilterEnrollmentsDto,
+} from './dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CenterOwnershipGuard } from '../../common/guards/center-ownership.guard';
@@ -70,5 +74,26 @@ export class EnrollmentsController {
     @Body() dto: AssignDiscountDto,
   ) {
     return this.enrollmentsService.assignDiscount(id, dto);
+  }
+}
+
+@Controller('groups')
+@UseGuards(JwtAuthGuard, PermissionsGuard, CenterOwnershipGuard)
+export class GroupEnrollmentsController {
+  constructor(private readonly enrollmentsService: EnrollmentsService) {}
+
+  @Get(':id/students')
+  @RequirePermissions('enrollment.read')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  findStudentsByGroup(
+    @Param('id', ParseIntPipe) groupId: number,
+    @ActiveCenterId() centerId: number,
+    @Query() filterDto: FilterEnrollmentsDto,
+  ) {
+    return this.enrollmentsService.findStudentsByGroup(
+      groupId,
+      centerId,
+      filterDto,
+    );
   }
 }

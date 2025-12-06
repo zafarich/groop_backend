@@ -286,10 +286,44 @@ export class GroupsService {
   }
 
   /**
-   * Find one group by ID
+   * Find one group by ID with complete details for group page
    */
   async findOne(id: number) {
-    const group = await this.findOneRaw(id);
+    const group = await this.prisma.group.findUnique({
+      where: { id, isDeleted: false },
+      include: {
+        groupTeachers: {
+          include: {
+            teacher: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                specialty: true,
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        lessonSchedules: {
+          orderBy: { dayOfWeek: 'asc' },
+        },
+        groupDiscounts: {
+          where: { isDeleted: false },
+          orderBy: { months: 'asc' },
+        },
+      },
+    });
+
+    if (!group) {
+      throw new NotFoundException(`Group with ID ${id} not found`);
+    }
 
     return {
       success: true,

@@ -5,7 +5,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { AssignDiscountDto, ActivateEnrollmentDto } from './dto';
+import {
+  AssignDiscountDto,
+  ActivateEnrollmentDto,
+  FilterEnrollmentsDto,
+} from './dto';
 import { LessonSchedule, Prisma, Payment } from '@prisma/client';
 
 export interface ProratedPriceResult {
@@ -28,6 +32,7 @@ export class EnrollmentsService {
 
   /**
    * Get all leads (students pending activation) for a group
+   * @deprecated Use findStudentsByGroup with status filter instead
    */
   async findLeads(groupId: number, centerId: number) {
     const group = await this.prisma.group.findFirst({
@@ -64,6 +69,133 @@ export class EnrollmentsService {
       },
       orderBy: { joinedAt: 'desc' },
     });
+
+    return {
+      success: true,
+      code: 0,
+      data: leads,
+      message: 'Leads retrieved successfully',
+    };
+  }
+
+  /**
+   * Get students by group with pagination and filters
+   */
+  async findStudentsByGroup(
+    groupId: number,
+    centerId: number,
+    filterDto: FilterEnrollmentsDto,
+  ) {
+    // Validate group exists and belongs to center
+    const group = await this.prisma.group.findFirst({
+      where: {
+        id: groupId,
+        centerId,
+        isDeleted: false,
+      },
+    });
+
+    if (!group) {
+      throw new NotFoundException(`Group not found`);
+    }
+
+    const { page = 1, limit = 10, status, search } = filterDto;
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where: Prisma.EnrollmentWhereInput = {
+      groupId,
+      isDeleted: false,
+    };
+
+    // Add status filter if provided
+    if (status) {
+      where.status = status;
+    }
+
+    // Add search filter if provided (search in student name)
+    if (search) {
+      where.OR = [
+        {
+          student: {
+            firstName: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          student: {
+            lastName: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          student: {
+            user: {
+              firstName: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          student: {
+            user: {
+              lastName: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+      ];
+    }
+
+    // Get total count for pagination
+    const total = await this.prisma.enrollment.count({ where });
+
+    // Get paginated enrollments
+    const enrollments = await this.prisma.enrollment.findMany({
+      where,
+      skip,
+      take: limit,
+      include: {
+        student: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            user: {
+              select: {
+                id: true,
+                phoneNumber: true,
+                telegramUserId: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { joinedAt: 'desc' },
+    });
+
+    return {
+      success: true,
+      code: 0,
+      data: enrollments,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      message: 'Students retrieved successfully',
+    };
   }
 
   /**
