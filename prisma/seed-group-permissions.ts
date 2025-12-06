@@ -7,32 +7,11 @@ async function main() {
 
   const permissions = [
     {
-      name: 'Create Group',
-      slug: 'group.create',
-      description: 'Create new group',
-      module: 'group',
-      action: 'create',
-    },
-    {
-      name: 'Read Group',
-      slug: 'group.read',
-      description: 'View groups',
-      module: 'group',
+      name: 'Read Enrollment',
+      slug: 'enrollment.read',
+      description: 'Read enrollments',
+      module: 'enrollment',
       action: 'read',
-    },
-    {
-      name: 'Update Group',
-      slug: 'group.update',
-      description: 'Update group details',
-      module: 'group',
-      action: 'update',
-    },
-    {
-      name: 'Delete Group',
-      slug: 'group.delete',
-      description: 'Delete group',
-      module: 'group',
-      action: 'delete',
     },
   ];
 
