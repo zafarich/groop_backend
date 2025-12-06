@@ -1326,6 +1326,33 @@ export class TelegramService {
         });
       });
 
+      // Check for pending group join
+      this.logger.log(
+        `Checking pending group join for existing user ${telegramUser.id}`,
+      );
+      const botState = await this.prisma.studentBotState.findUnique({
+        where: {
+          telegramUserId_centerId: {
+            telegramUserId: telegramUser.id,
+            centerId: bot.centerId,
+          },
+        },
+      });
+
+      if (botState && botState.groupId) {
+        await this.sendMessageToUser(
+          bot,
+          telegramUser.chatId || '',
+          `✅ Muvaffaqiyatli ulandi!`,
+        );
+
+        // Pass complete user object
+        const fullTelegramUser = { ...telegramUser, user: existingUser } as any; // Cast to bypass type for now
+
+        await this.handleGroupJoin(bot, fullTelegramUser, botState.groupId);
+        return;
+      }
+
       // Send success message
       await this.sendMessageToUser(
         bot,
