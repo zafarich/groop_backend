@@ -667,20 +667,34 @@ export class TelegramService {
       await this.showGroupInfoWithPayments(bot, telegramUserWithUser, group);
     } else {
       this.logger.log(
-        `User ${telegramUserWithUser.id} NOT registered, saving intent to TelegramUser metadata`,
+        `User ${telegramUserWithUser.id} NOT registered, saving intent to StudentBotState`,
       );
 
       // 3. User not registered - save intent and start registration
-      // Update metadata with pendingGroupId and set step
-      const currentMetadata =
-        (telegramUserWithUser.metadata as Record<string, any>) || {};
-      const updatedMetadata = { ...currentMetadata, pendingGroupId: group.id };
+      // Save intent to StudentBotState
+      await this.prisma.studentBotState.upsert({
+        where: {
+          telegramUserId_centerId: {
+            telegramUserId: telegramUserWithUser.id,
+            centerId: bot.centerId,
+          },
+        },
+        update: {
+          groupId: group.id,
+          currentStep: 'share_contact',
+        },
+        create: {
+          telegramUserId: telegramUserWithUser.id,
+          centerId: bot.centerId,
+          groupId: group.id,
+          currentStep: 'share_contact',
+        },
+      });
 
       await this.prisma.telegramUser.update({
         where: { id: telegramUserWithUser.id },
         data: {
           userStep: 'share_contact',
-          metadata: updatedMetadata,
         },
       });
 
@@ -854,18 +868,25 @@ export class TelegramService {
         `Checking pending group join for user ${telegramUser.id} center ${bot.centerId}`,
       );
 
-      // Reload metadata to check for pendingGroupId
-      const freshUserWithMetadata = await this.prisma.telegramUser.findUnique({
-        where: { id: telegramUser.id },
-        select: { metadata: true },
+      // Check for pending group join
+      this.logger.log(
+        `Checking matching pending group join for user ${telegramUser.id}`,
+      );
+
+      // Check StudentBotState for pending group
+      const botState = await this.prisma.studentBotState.findUnique({
+        where: {
+          telegramUserId_centerId: {
+            telegramUserId: telegramUser.id,
+            centerId: bot.centerId,
+          },
+        },
       });
 
-      const metadata =
-        (freshUserWithMetadata?.metadata as Record<string, any>) || {};
-
-      if (metadata.pendingGroupId) {
-        const groupId = Number(metadata.pendingGroupId);
-        this.logger.log(`Pending group join found in metadata: ${groupId}`);
+      if (botState && botState.groupId) {
+        this.logger.log(
+          `Pending group join found in StudentBotState: ${botState.groupId}`,
+        );
 
         // User had intent to join a group - redirect to group info
         await this.sendMessageToUser(
@@ -874,20 +895,13 @@ export class TelegramService {
           `✅ Ro'yxatdan o'tish muvaffaqiyatli yakunlandi!`,
         );
 
-        // Clean up metadata (remove pendingGroupId)
-        delete metadata.pendingGroupId;
-        await this.prisma.telegramUser.update({
-          where: { id: telegramUser.id },
-          data: { metadata },
-        });
-
         // Pass fresh user object to handleGroupJoin
         const fullTelegramUser = {
           ...freshTelegramUser,
           user: newUser,
         } as unknown as TelegramUserWithUser;
 
-        await this.handleGroupJoin(bot, fullTelegramUser, groupId);
+        await this.handleGroupJoin(bot, fullTelegramUser, botState.groupId);
         return;
       }
 
@@ -1259,35 +1273,27 @@ export class TelegramService {
         `Checking pending group join for existing user ${telegramUser.id}`,
       );
 
-      // Reload metadata
-      const freshUserWithMetadata = await this.prisma.telegramUser.findUnique({
-        where: { id: telegramUser.id },
-        select: { metadata: true },
+      // Check StudentBotState for pending group
+      const botState = await this.prisma.studentBotState.findUnique({
+        where: {
+          telegramUserId_centerId: {
+            telegramUserId: telegramUser.id,
+            centerId: bot.centerId,
+          },
+        },
       });
 
-      const metadata =
-        (freshUserWithMetadata?.metadata as Record<string, any>) || {};
-
-      if (metadata.pendingGroupId) {
-        const groupId = Number(metadata.pendingGroupId);
-
+      if (botState && botState.groupId) {
         await this.sendMessageToUser(
           bot,
           telegramUser.chatId || '',
           `✅ Muvaffaqiyatli ulandi!`,
         );
 
-        // Clean up metadata
-        delete metadata.pendingGroupId;
-        await this.prisma.telegramUser.update({
-          where: { id: telegramUser.id },
-          data: { metadata },
-        });
-
         // Pass complete user object
-        const fullTelegramUser = { ...telegramUser, user: existingUser } as any; // Cast to bypass type for now
+        const fullTelegramUser = { ...telegramUser, user: existingUser } as any;
 
-        await this.handleGroupJoin(bot, fullTelegramUser, groupId);
+        await this.handleGroupJoin(bot, fullTelegramUser, botState.groupId);
         return;
       }
 
@@ -1446,17 +1452,31 @@ export class TelegramService {
       return;
     }
 
-    // Save name to TelegramUser metadata
-    const currentMetadata =
-      (telegramUser.metadata as Record<string, any>) || {};
-    const updatedMetadata = { ...currentMetadata, studentName: name };
+    // Save name to StudentBotState
+    await this.prisma.studentBotState.upsert({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      update: {
+        studentName: name,
+        currentStep: 'select_group',
+      },
+      create: {
+        telegramUserId: telegramUser.id,
+        centerId: bot.centerId,
+        studentName: name,
+        currentStep: 'select_group',
+        contactShared: true,
+      },
+    });
 
+    // Update user step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: {
-        userStep: 'select_group',
-        metadata: updatedMetadata,
-      },
+      data: { userStep: 'select_group' },
     });
 
     // Show available groups
@@ -1530,20 +1550,24 @@ export class TelegramService {
 
     const selectedGroup = groups[groupNumber - 1];
 
-    // Update state with selected group in metadata
-    const currentMetadata =
-      (telegramUser.metadata as Record<string, any>) || {};
-    const updatedMetadata = {
-      ...currentMetadata,
-      pendingGroupId: selectedGroup.id,
-    };
+    // Update state with selected group
+    await this.prisma.studentBotState.update({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      data: {
+        groupId: selectedGroup.id,
+        currentStep: 'select_payment',
+      },
+    });
 
+    // Update user step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: {
-        userStep: 'select_payment',
-        metadata: updatedMetadata,
-      },
+      data: { userStep: 'select_payment' },
     });
 
     // Show payment options
@@ -1579,13 +1603,17 @@ export class TelegramService {
   ) {
     const paymentOption = parseInt(text.trim(), 10);
 
-    // Get metadata to find selected group
-    const metadata = (telegramUser.metadata as Record<string, any>) || {};
-    const groupId = metadata.pendingGroupId
-      ? Number(metadata.pendingGroupId)
-      : null;
+    // Get bot state
+    const botState = await this.prisma.studentBotState.findUnique({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+    });
 
-    if (!groupId) {
+    if (!botState || !botState.groupId) {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
@@ -1596,7 +1624,7 @@ export class TelegramService {
 
     // Get group with discounts
     const group = await this.prisma.group.findUnique({
-      where: { id: groupId },
+      where: { id: botState.groupId },
       include: {
         groupDiscounts: {
           where: { isDeleted: false },
@@ -1670,19 +1698,28 @@ export class TelegramService {
       }
     }
 
-    // Save selected payment info to metadata
-    const updatedMetadata = {
-      ...metadata,
-      paymentAmount: amount,
-      paymentMonths: months,
-    };
+    // Save selected payment info to state
+    await this.prisma.studentBotState.update({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      data: {
+        selectedMonths: months,
+        currentStep: 'waiting_receipt',
+        metadata: {
+          amount,
+          months,
+        },
+      },
+    });
 
+    // Update user step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: {
-        userStep: 'waiting_receipt',
-        metadata: updatedMetadata,
-      },
+      data: { userStep: 'waiting_receipt' },
     });
 
     // Show payment cards
@@ -1763,16 +1800,17 @@ export class TelegramService {
 
     this.logger.log(`Payment receipt file URL: ${fileUrl}`);
 
-    // Get metadata
-    const metadata = (telegramUser.metadata as Record<string, any>) || {};
-    const amount = metadata.paymentAmount;
-    const months = metadata.paymentMonths;
-    const groupId = metadata.pendingGroupId
-      ? Number(metadata.pendingGroupId)
-      : null;
-    const studentName = metadata.studentName;
+    // Get bot state
+    const botState = await this.prisma.studentBotState.findUnique({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+    });
 
-    if (!groupId || !amount || !months) {
+    if (!botState || !botState.groupId || !botState.metadata) {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
@@ -1781,6 +1819,10 @@ export class TelegramService {
       return;
     }
 
+    const metadata = botState.metadata as any;
+    const amount = metadata.amount;
+    const months = metadata.months;
+
     // Ensure user has a linked User record
     let linkedUser = telegramUser.user;
     if (!linkedUser) {
@@ -1788,7 +1830,7 @@ export class TelegramService {
       const defaultPhoneNumber = `998${telegramUser.telegramId.slice(-9).padStart(9, '0')}`;
 
       const userData = buildUserData({
-        firstName: telegramUser.firstName || studentName,
+        firstName: telegramUser.firstName || botState.studentName,
         lastName: telegramUser.lastName,
         phoneNumber: telegramUser.phoneNumber || defaultPhoneNumber,
         centerId: bot.centerId,
@@ -1837,7 +1879,7 @@ export class TelegramService {
     const payment = await this.prisma.payment.create({
       data: {
         centerId: bot.centerId,
-        groupId: groupId,
+        groupId: botState.groupId,
         studentId: student.id,
         amount,
         currency: 'UZS',
@@ -1850,20 +1892,24 @@ export class TelegramService {
 
     this.logger.log(`Created Payment record ${payment.id} for ${amount} UZS`);
 
-    // Clear metadata keys related to enrollment
-    const updatedMetadata = { ...metadata };
-    delete updatedMetadata.pendingGroupId;
-    delete updatedMetadata.paymentAmount;
-    delete updatedMetadata.paymentMonths;
-    delete updatedMetadata.studentName;
+    // Update bot state with payment ID
+    await this.prisma.studentBotState.update({
+      where: {
+        telegramUserId_centerId: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+        },
+      },
+      data: {
+        paymentId: payment.id,
+        currentStep: 'completed',
+      },
+    });
 
-    // Clear user step and update metadata
+    // Clear user step (enrollment complete)
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: {
-        userStep: null,
-        metadata: updatedMetadata,
-      },
+      data: { userStep: null },
     });
 
     await this.sendMessageToUser(
