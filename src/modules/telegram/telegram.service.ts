@@ -347,6 +347,16 @@ export class TelegramService {
           `Created new TelegramUser ${telegramUser.id} for private chat, starting registration flow`,
         );
 
+        // Check if it's a deep link start command (e.g., /start group_123)
+        if (message.text && message.text.startsWith('/start ')) {
+          const param = message.text.substring(7).trim();
+          if (param) {
+            this.logger.log(`New user started with param: ${param}`);
+            await this.handleStartCommand(bot, telegramUser, param);
+            return;
+          }
+        }
+
         // Show share contact button immediately
         await this.promptShareContact(bot, telegramUser);
         return;
