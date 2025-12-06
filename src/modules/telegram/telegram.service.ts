@@ -657,34 +657,21 @@ export class TelegramService {
       await this.showGroupInfoWithPayments(bot, telegramUserWithUser, group);
     } else {
       this.logger.log(
-        `User ${telegramUserWithUser.id} NOT registered, saving intent to StudentBotState`,
+        `User ${telegramUserWithUser.id} NOT registered, saving intent to TelegramUser metadata`,
       );
-      // 3. User not registered - save intent and start registration
-      await this.prisma.studentBotState.upsert({
-        where: {
-          telegramUserId_centerId: {
-            telegramUserId: telegramUserWithUser.id,
-            centerId: bot.centerId,
-          },
-        },
-        create: {
-          telegramUserId: telegramUserWithUser.id,
-          centerId: bot.centerId,
-          groupId: group.id,
-          currentStep: 'share_contact',
-          isDeleted: false,
-        },
-        update: {
-          groupId: group.id,
-          currentStep: 'share_contact',
-          isDeleted: false,
-        },
-      });
 
-      // Start registration flow
+      // 3. User not registered - save intent and start registration
+      // Update metadata with pendingGroupId and set step
+      const currentMetadata =
+        (telegramUserWithUser.metadata as Record<string, any>) || {};
+      const updatedMetadata = { ...currentMetadata, pendingGroupId: group.id };
+
       await this.prisma.telegramUser.update({
         where: { id: telegramUserWithUser.id },
-        data: { userStep: 'share_contact' },
+        data: {
+          userStep: 'share_contact',
+          metadata: updatedMetadata,
+        },
       });
 
       const welcomeMessage =
@@ -856,20 +843,20 @@ export class TelegramService {
       this.logger.log(
         `Checking pending group join for user ${telegramUser.id} center ${bot.centerId}`,
       );
-      const botState = await this.prisma.studentBotState.findUnique({
-        where: {
-          telegramUserId_centerId: {
-            telegramUserId: telegramUser.id,
-            centerId: bot.centerId,
-          },
-        },
+
+      // Reload metadata to check for pendingGroupId
+      const freshUserWithMetadata = await this.prisma.telegramUser.findUnique({
+        where: { id: telegramUser.id },
+        select: { metadata: true },
       });
 
-      this.logger.log(
-        `Bot state found: ${botState ? JSON.stringify(botState) : 'null'}`,
-      );
+      const metadata =
+        (freshUserWithMetadata?.metadata as Record<string, any>) || {};
 
-      if (botState && botState.groupId) {
+      if (metadata.pendingGroupId) {
+        const groupId = Number(metadata.pendingGroupId);
+        this.logger.log(`Pending group join found in metadata: ${groupId}`);
+
         // User had intent to join a group - redirect to group info
         await this.sendMessageToUser(
           bot,
@@ -877,13 +864,20 @@ export class TelegramService {
           `✅ Ro'yxatdan o'tish muvaffaqiyatli yakunlandi!`,
         );
 
+        // Clean up metadata (remove pendingGroupId)
+        delete metadata.pendingGroupId;
+        await this.prisma.telegramUser.update({
+          where: { id: telegramUser.id },
+          data: { metadata },
+        });
+
         // Pass fresh user object to handleGroupJoin
         const fullTelegramUser = {
           ...freshTelegramUser,
           user: newUser,
         } as unknown as TelegramUserWithUser;
 
-        await this.handleGroupJoin(bot, fullTelegramUser, botState.groupId);
+        await this.handleGroupJoin(bot, fullTelegramUser, groupId);
         return;
       }
 
@@ -903,6 +897,63 @@ export class TelegramService {
         "❌ Ro'yxatdan o'tishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
       );
     }
+  }
+
+  /**
+   * Handle course enrollment from link
+   */
+  private async handleCourseEnrollment(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    courseToken: string,
+  ) {
+    this.logger.log(
+      `User ${telegramUser.telegramId} trying to enroll in course ${courseToken}`,
+    );
+
+    // Mock response for now as we focus on Group Join
+    await this.sendMessageToUser(
+      bot,
+      telegramUser.chatId || '',
+      `📚 Kurs bo'yicha ma'lumot olish (Tez orada...)`,
+    );
+  }
+
+  /**
+   * Handle /help command
+   */
+  private async handleHelpCommand(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+  ) {
+    const helpText =
+      `<b>Yordam:</b>\n\n` +
+      `/start - Botni ishga tushirish\n` +
+      `/menu - Kurslar ro'yxati\n` +
+      `/help - Yordam\n\n` +
+      `Savollar bo'lsa, bizga murojaat qiling: ${bot.center.name}`;
+
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', helpText, {
+      parse_mode: 'HTML',
+    });
+  }
+
+  /**
+   * Handle /menu command
+   */
+  private async handleMenuCommand(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+  ) {
+    const menuText =
+      `<b>${bot.center.name}</b>\n\n` +
+      `<b>Mavjud kurslar:</b>\n\n` +
+      `📚 Hozircha kurslar mavjud emas.\n\n` +
+      `Tez orada yangi kurslar qo'shiladi!`;
+
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', menuText, {
+      parse_mode: 'HTML',
+    });
   }
   /**
    * Handle /start command
@@ -1112,18 +1163,6 @@ export class TelegramService {
         data: {
           botLinkToken: null, // Clear token (one-time use)
           telegramUserId: telegramUser.id,
-          authProvider: 'telegram', // Switch to telegram auth
-          isActive: true, // Ensure active
-        },
-      });
-
-      // 3. Update TelegramUser profile with Teacher's name if needed
-      await tx.telegramUser.update({
-        where: { id: telegramUser.id },
-        data: {
-          firstName: targetUser.firstName || telegramUser.firstName,
-          lastName: targetUser.lastName || telegramUser.lastName,
-          phoneNumber: targetUser.phoneNumber || telegramUser.phoneNumber,
         },
       });
     });
@@ -1132,133 +1171,12 @@ export class TelegramService {
       bot,
       telegramUser.chatId || '',
       `✅ Muvaffaqiyatli ulandi!\n\n` +
-        `Hurmatli ${targetUser.firstName} ${targetUser.lastName}, sizning Telegram hisobingiz o'qituvchi profilingizga ulandi.`,
+        `Siz allaqachon tizimda ro'yxatdan o'tgansiz.\n` +
+        `Telegram hisobingiz profilingizga ulandi.\n\n` +
+        `/menu - Kurslarni ko'rish`,
+      { reply_markup: this.telegramApi.buildRemoveKeyboard() },
     );
-  }
-
-  /**
-   * Handle course enrollment from link
-   * TODO: Implement with actual Course model later
-   */
-  private async handleCourseEnrollment(
-    bot: TelegramBotWithCenter,
-    telegramUser: TelegramUserWithUser,
-    courseToken: string,
-  ) {
-    this.logger.log(
-      `User ${telegramUser.telegramId} trying to enroll in course ${courseToken}`,
-    );
-
-    // Mock: In real implementation, find course by token
-    // const enrollment = await this.findCourseByToken(courseToken);
-
-    // Mock course info
-    const courseInfo =
-      `📚 <b>Python Asoslari kursi</b>\n\n` +
-      `👨‍🏫 <b>O'qituvchi:</b> Alisher Karimov\n` +
-      `📅 <b>Boshlanish:</b> 2024-02-01\n` +
-      `⏰ <b>Davomiyligi:</b> 3 oy\n` +
-      `💰 <b>Narx:</b> 500,000 so'm\n\n` +
-      `📝 <b>Tavsif:</b>\n` +
-      `Python dasturlash tilining asoslarini o'rganasiz. ` +
-      `Kursda amaliy mashg'ulotlar va real loyihalar ustida ishlaymiz.\n\n`;
-
-    // Get payment cards for this center
-    const paymentCards = await this.prisma.centerPaymentCard.findMany({
-      where: {
-        centerId: bot.centerId,
-        isVisible: true,
-        isActive: true,
-      },
-      orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
-    });
-
-    let paymentInfo = '';
-    if (paymentCards && paymentCards.length > 0) {
-      paymentInfo = `💳 <b>To'lov uchun kartalar:</b>\n\n`;
-
-      for (const card of paymentCards) {
-        paymentInfo += `${card.isPrimary ? '⭐ ' : ''}Karta: <code>${card.cardNumber}</code>\n`;
-        paymentInfo += `${card.cardHolder}\n`;
-        if (card.bankName) {
-          paymentInfo += `Bank: ${card.bankName}\n`;
-        }
-        if (card.description) {
-          paymentInfo += `${card.description}\n`;
-        }
-        paymentInfo += `\n`;
-      }
-
-      paymentInfo += `${bot.paymentInstruction || "To'lov qilganingizdan keyin chek rasmini yuboring."}`;
-    } else {
-      paymentInfo = "To'lov ma'lumotlari hali sozlanmagan.";
-    }
-
-    const keyboard = this.telegramApi.buildInlineKeyboard([
-      [
-        {
-          text: '📸 Chek Yuborish',
-          callback_data: `send_receipt:${courseToken}`,
-        },
-      ],
-      [
-        {
-          text: '❌ Bekor qilish',
-          callback_data: `cancel_enrollment:${courseToken}`,
-        },
-      ],
-    ]);
-
-    await this.sendMessageToUser(
-      bot,
-      telegramUser.chatId || '',
-      courseInfo + paymentInfo,
-      {
-        parse_mode: 'HTML',
-        reply_markup: keyboard,
-      },
-    );
-
-    // TODO: Create enrollment record with status PENDING_PAYMENT
-    // await this.createEnrollment(telegramUser.id, courseId, 'PENDING');
-  }
-
-  /**
-   * Handle /help command
-   */
-  private async handleHelpCommand(
-    bot: TelegramBotWithCenter,
-    telegramUser: TelegramUserWithUser,
-  ) {
-    const helpText =
-      `<b>Yordam:</b>\n\n` +
-      `/start - Botni ishga tushirish\n` +
-      `/menu - Kurslar ro'yxati\n` +
-      `/help - Yordam\n\n` +
-      `Savollar bo'lsa, bizga murojaat qiling: ${bot.center.name}`;
-
-    await this.sendMessageToUser(bot, telegramUser.chatId || '', helpText, {
-      parse_mode: 'HTML',
-    });
-  }
-
-  /**
-   * Handle /menu command
-   */
-  private async handleMenuCommand(
-    bot: TelegramBotWithCenter,
-    telegramUser: TelegramUserWithUser,
-  ) {
-    // TODO: Get actual courses from database
-    const menuText =
-      `<b>${bot.center.name}</b>\n\n` +
-      `<b>Mavjud kurslar:</b>\n\n` +
-      `📚 Hozircha kurslar mavjud emas.\n\n` +
-      `Tez orada yangi kurslar qo'shiladi!`;
-
-    await this.sendMessageToUser(bot, telegramUser.chatId || '', menuText, {
-      parse_mode: 'HTML',
-    });
+    return;
   }
 
   /**
@@ -1330,26 +1248,36 @@ export class TelegramService {
       this.logger.log(
         `Checking pending group join for existing user ${telegramUser.id}`,
       );
-      const botState = await this.prisma.studentBotState.findUnique({
-        where: {
-          telegramUserId_centerId: {
-            telegramUserId: telegramUser.id,
-            centerId: bot.centerId,
-          },
-        },
+
+      // Reload metadata
+      const freshUserWithMetadata = await this.prisma.telegramUser.findUnique({
+        where: { id: telegramUser.id },
+        select: { metadata: true },
       });
 
-      if (botState && botState.groupId) {
+      const metadata =
+        (freshUserWithMetadata?.metadata as Record<string, any>) || {};
+
+      if (metadata.pendingGroupId) {
+        const groupId = Number(metadata.pendingGroupId);
+
         await this.sendMessageToUser(
           bot,
           telegramUser.chatId || '',
           `✅ Muvaffaqiyatli ulandi!`,
         );
 
+        // Clean up metadata
+        delete metadata.pendingGroupId;
+        await this.prisma.telegramUser.update({
+          where: { id: telegramUser.id },
+          data: { metadata },
+        });
+
         // Pass complete user object
         const fullTelegramUser = { ...telegramUser, user: existingUser } as any; // Cast to bypass type for now
 
-        await this.handleGroupJoin(bot, fullTelegramUser, botState.groupId);
+        await this.handleGroupJoin(bot, fullTelegramUser, groupId);
         return;
       }
 
@@ -1508,31 +1436,17 @@ export class TelegramService {
       return;
     }
 
-    // Save name to StudentBotState
-    await this.prisma.studentBotState.upsert({
-      where: {
-        telegramUserId_centerId: {
-          telegramUserId: telegramUser.id,
-          centerId: bot.centerId,
-        },
-      },
-      update: {
-        studentName: name,
-        currentStep: 'select_group',
-      },
-      create: {
-        telegramUserId: telegramUser.id,
-        centerId: bot.centerId,
-        studentName: name,
-        currentStep: 'select_group',
-        contactShared: true,
-      },
-    });
+    // Save name to TelegramUser metadata
+    const currentMetadata =
+      (telegramUser.metadata as Record<string, any>) || {};
+    const updatedMetadata = { ...currentMetadata, studentName: name };
 
-    // Update user step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: { userStep: 'select_group' },
+      data: {
+        userStep: 'select_group',
+        metadata: updatedMetadata,
+      },
     });
 
     // Show available groups
@@ -1554,17 +1468,17 @@ export class TelegramService {
       return;
     }
 
-    let groupList = `✅ Rahmat, ${name}!\\n\\n📚 Mavjud guruhlar:\\n\\n`;
+    let groupList = `✅ Rahmat, ${name}!\n\n📚 Mavjud guruhlar:\n\n`;
     groups.forEach((group, index) => {
-      groupList += `${index + 1}. ${group.name}\\n`;
-      groupList += `   💰 Narx: ${group.monthlyPrice} so'm/oy\\n`;
+      groupList += `${index + 1}. ${group.name}\n`;
+      groupList += `   💰 Narx: ${group.monthlyPrice} so'm/oy\n`;
       if (group.description) {
-        groupList += `   📝 ${group.description}\\n`;
+        groupList += `   📝 ${group.description}\n`;
       }
-      groupList += `\\n`;
+      groupList += `\n`;
     });
 
-    groupList += `\\nGuruh raqamini kiriting (1-${groups.length}):`;
+    groupList += `\nGuruh raqamini kiriting (1-${groups.length}):`;
 
     await this.sendMessageToUser(bot, telegramUser.chatId || '', groupList);
   }
@@ -1606,30 +1520,26 @@ export class TelegramService {
 
     const selectedGroup = groups[groupNumber - 1];
 
-    // Update state with selected group
-    await this.prisma.studentBotState.update({
-      where: {
-        telegramUserId_centerId: {
-          telegramUserId: telegramUser.id,
-          centerId: bot.centerId,
-        },
-      },
-      data: {
-        groupId: selectedGroup.id,
-        currentStep: 'select_payment',
-      },
-    });
+    // Update state with selected group in metadata
+    const currentMetadata =
+      (telegramUser.metadata as Record<string, any>) || {};
+    const updatedMetadata = {
+      ...currentMetadata,
+      pendingGroupId: selectedGroup.id,
+    };
 
-    // Update user step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: { userStep: 'select_payment' },
+      data: {
+        userStep: 'select_payment',
+        metadata: updatedMetadata,
+      },
     });
 
     // Show payment options
-    let paymentOptions = `✅ Siz tanladingiz: ${selectedGroup.name}\\n\\n`;
-    paymentOptions += `💰 To'lov variantlari:\\n\\n`;
-    paymentOptions += `1. 1 oy - ${selectedGroup.monthlyPrice} so'm\\n`;
+    let paymentOptions = `✅ Siz tanladingiz: ${selectedGroup.name}\n\n`;
+    paymentOptions += `💰 To'lov variantlari:\n\n`;
+    paymentOptions += `1. 1 oy - ${selectedGroup.monthlyPrice} so'm\n`;
 
     // Add multi-month options with discounts
     selectedGroup.groupDiscounts.forEach((discount, index) => {
@@ -1637,10 +1547,10 @@ export class TelegramService {
         Number(selectedGroup.monthlyPrice) * discount.months -
         Number(discount.discountAmount);
       paymentOptions += `${index + 2}. ${discount.months} oy - ${totalPrice} so'm `;
-      paymentOptions += `(${discount.discountAmount} so'm chegirma!)\\n`;
+      paymentOptions += `(${discount.discountAmount} so'm chegirma!)\n`;
     });
 
-    paymentOptions += `\\nTo'lov turini tanlang (1-${1 + selectedGroup.groupDiscounts.length}):`;
+    paymentOptions += `\nTo'lov turini tanlang (1-${1 + selectedGroup.groupDiscounts.length}):`;
 
     await this.sendMessageToUser(
       bot,
@@ -1659,17 +1569,13 @@ export class TelegramService {
   ) {
     const paymentOption = parseInt(text.trim(), 10);
 
-    // Get bot state
-    const botState = await this.prisma.studentBotState.findUnique({
-      where: {
-        telegramUserId_centerId: {
-          telegramUserId: telegramUser.id,
-          centerId: bot.centerId,
-        },
-      },
-    });
+    // Get metadata to find selected group
+    const metadata = (telegramUser.metadata as Record<string, any>) || {};
+    const groupId = metadata.pendingGroupId
+      ? Number(metadata.pendingGroupId)
+      : null;
 
-    if (!botState || !botState.groupId) {
+    if (!groupId) {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
@@ -1680,7 +1586,7 @@ export class TelegramService {
 
     // Get group with discounts
     const group = await this.prisma.group.findUnique({
-      where: { id: botState.groupId },
+      where: { id: groupId },
       include: {
         groupDiscounts: {
           where: { isDeleted: false },
@@ -1754,28 +1660,19 @@ export class TelegramService {
       }
     }
 
-    // Save selected payment info to state
-    await this.prisma.studentBotState.update({
-      where: {
-        telegramUserId_centerId: {
-          telegramUserId: telegramUser.id,
-          centerId: bot.centerId,
-        },
-      },
-      data: {
-        selectedMonths: months,
-        currentStep: 'waiting_receipt',
-        metadata: {
-          amount,
-          months,
-        },
-      },
-    });
+    // Save selected payment info to metadata
+    const updatedMetadata = {
+      ...metadata,
+      paymentAmount: amount,
+      paymentMonths: months,
+    };
 
-    // Update user step
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: { userStep: 'waiting_receipt' },
+      data: {
+        userStep: 'waiting_receipt',
+        metadata: updatedMetadata,
+      },
     });
 
     // Show payment cards
@@ -1788,23 +1685,23 @@ export class TelegramService {
       orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
     });
 
-    let paymentInfo = `✅ To'lov: ${months} oy - ${amount} so'm\\n\\n`;
+    let paymentInfo = `✅ To'lov: ${months} oy - ${amount} so'm\n\n`;
 
     if (paymentCards && paymentCards.length > 0) {
-      paymentInfo += `💳 To'lov uchun kartalar:\\n\\n`;
+      paymentInfo += `💳 To'lov uchun kartalar:\n\n`;
 
       for (const card of paymentCards) {
-        paymentInfo += `${card.isPrimary ? '⭐ ' : ''}${card.cardNumber}\\n`;
-        paymentInfo += `${card.cardHolder}\\n`;
+        paymentInfo += `${card.isPrimary ? '⭐ ' : ''}${card.cardNumber}\n`;
+        paymentInfo += `${card.cardHolder}\n`;
         if (card.bankName) {
-          paymentInfo += `Bank: ${card.bankName}\\n`;
+          paymentInfo += `Bank: ${card.bankName}\n`;
         }
-        paymentInfo += `\\n`;
+        paymentInfo += `\n`;
       }
 
-      paymentInfo += `\\nTo'lov chekini rasmda yuboring 📸`;
+      paymentInfo += `\nTo'lov chekini rasmda yuboring 📸`;
     } else {
-      paymentInfo += `\\nIltimos, admin bilan bog'laning.`;
+      paymentInfo += `\nIltimos, admin bilan bog'laning.`;
     }
 
     await this.sendMessageToUser(bot, telegramUser.chatId || '', paymentInfo);
@@ -1856,17 +1753,16 @@ export class TelegramService {
 
     this.logger.log(`Payment receipt file URL: ${fileUrl}`);
 
-    // Get bot state
-    const botState = await this.prisma.studentBotState.findUnique({
-      where: {
-        telegramUserId_centerId: {
-          telegramUserId: telegramUser.id,
-          centerId: bot.centerId,
-        },
-      },
-    });
+    // Get metadata
+    const metadata = (telegramUser.metadata as Record<string, any>) || {};
+    const amount = metadata.paymentAmount;
+    const months = metadata.paymentMonths;
+    const groupId = metadata.pendingGroupId
+      ? Number(metadata.pendingGroupId)
+      : null;
+    const studentName = metadata.studentName;
 
-    if (!botState || !botState.groupId || !botState.metadata) {
+    if (!groupId || !amount || !months) {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
@@ -1875,10 +1771,6 @@ export class TelegramService {
       return;
     }
 
-    const metadata = botState.metadata as any;
-    const amount = metadata.amount;
-    const months = metadata.months;
-
     // Ensure user has a linked User record
     let linkedUser = telegramUser.user;
     if (!linkedUser) {
@@ -1886,7 +1778,7 @@ export class TelegramService {
       const defaultPhoneNumber = `998${telegramUser.telegramId.slice(-9).padStart(9, '0')}`;
 
       const userData = buildUserData({
-        firstName: telegramUser.firstName || botState.studentName,
+        firstName: telegramUser.firstName || studentName,
         lastName: telegramUser.lastName,
         phoneNumber: telegramUser.phoneNumber || defaultPhoneNumber,
         centerId: bot.centerId,
@@ -1935,45 +1827,41 @@ export class TelegramService {
     const payment = await this.prisma.payment.create({
       data: {
         centerId: bot.centerId,
-        groupId: botState.groupId,
+        groupId: groupId,
         studentId: student.id,
         amount,
         currency: 'UZS',
         status: 'PENDING',
         paymentMethod: 'BANK_TRANSFER',
-        notes: `Receipt URL: ${fileUrl}\\nMonths: ${months}\\nCaption: ${message.caption || 'N/A'}`,
+        notes: `Receipt URL: ${fileUrl}\nMonths: ${months}\nCaption: ${message.caption || 'N/A'}`,
         periodStart: new Date(),
       },
     });
 
     this.logger.log(`Created Payment record ${payment.id} for ${amount} UZS`);
 
-    // Update bot state with payment ID
-    await this.prisma.studentBotState.update({
-      where: {
-        telegramUserId_centerId: {
-          telegramUserId: telegramUser.id,
-          centerId: bot.centerId,
-        },
-      },
-      data: {
-        paymentId: payment.id,
-        currentStep: 'completed',
-      },
-    });
+    // Clear metadata keys related to enrollment
+    const updatedMetadata = { ...metadata };
+    delete updatedMetadata.pendingGroupId;
+    delete updatedMetadata.paymentAmount;
+    delete updatedMetadata.paymentMonths;
+    delete updatedMetadata.studentName;
 
-    // Clear user step (enrollment complete)
+    // Clear user step and update metadata
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: { userStep: null },
+      data: {
+        userStep: null,
+        metadata: updatedMetadata,
+      },
     });
 
     await this.sendMessageToUser(
       bot,
       telegramUser.chatId || '',
-      '✅ Chek qabul qilindi!\\n\\n' +
-        `To'lovingiz tekshirilmoqda (${amount} so'm, ${months} oy).\\n` +
-        'Tasdiqlangandan keyin sizga xabar beramiz.\\n\\n' +
+      '✅ Chek qabul qilindi!\n\n' +
+        `To'lovingiz tekshirilmoqda (${amount} so'm, ${months} oy).\n` +
+        'Tasdiqlangandan keyin sizga xabar beramiz.\n\n' +
         "Yangi guruhga yozilish uchun /start buyrug'ini yuboring.",
     );
 
