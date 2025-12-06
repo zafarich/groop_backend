@@ -585,6 +585,306 @@ export class TelegramService {
   }
 
   /**
+   * Handle group enrollment from deep link
+   */
+  private async handleGroupJoin(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    groupId: number,
+  ) {
+    // 1. Find group
+    const group = await this.prisma.group.findUnique({
+      where: {
+        id: groupId,
+        centerId: bot.centerId,
+        isDeleted: false,
+      },
+      include: {
+        groupDiscounts: {
+          where: { isDeleted: false },
+          orderBy: { months: 'asc' },
+        },
+      },
+    });
+
+    if (!group || group.status !== 'ACTIVE') {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Guruh topilmadi yoki faol emas.',
+      );
+      return;
+    }
+
+    // 2. If user is registered, create enrollment (lead) and show info
+    if (telegramUser.user) {
+      // Create or update enrollment
+      await this.prisma.enrollment.upsert({
+        where: {
+          groupId_studentId: {
+            groupId: group.id,
+            studentId:
+              (
+                await this.prisma.student.findFirst({
+                  where: { userId: telegramUser.user.id },
+                })
+              )?.id || 0, // Should always exist for registered users
+          },
+        },
+        create: {
+          groupId: group.id,
+          studentId: (
+            await this.prisma.student.findFirstOrThrow({
+              where: { userId: telegramUser.user.id },
+            })
+          ).id,
+          status: 'ACTIVE', // Or PENDING/LEAD based on requirements, using active as lead
+          joinedAt: new Date(),
+          // Initialize prices (required fields)
+          baseLessonPrice: group.monthlyPrice, // Default to monthly price for now
+          perLessonPrice: group.monthlyPrice, // Default to monthly price for now
+        },
+        update: {}, // Already enrolled, just show info
+      });
+
+      await this.showGroupInfoWithPayments(bot, telegramUser, group);
+    } else {
+      // 3. User not registered - save intent and start registration
+      await this.prisma.studentBotState.upsert({
+        where: {
+          telegramUserId_centerId: {
+            telegramUserId: telegramUser.id,
+            centerId: bot.centerId,
+          },
+        },
+        create: {
+          telegramUserId: telegramUser.id,
+          centerId: bot.centerId,
+          groupId: group.id,
+          currentStep: 'share_contact',
+        },
+        update: {
+          groupId: group.id,
+          currentStep: 'share_contact',
+        },
+      });
+
+      // Start registration flow
+      await this.prisma.telegramUser.update({
+        where: { id: telegramUser.id },
+        data: { userStep: 'share_contact' },
+      });
+
+      const welcomeMessage =
+        `Assalomu alaykum! ${bot.center.name} o'quv markazi botiga xush kelibsiz! 👋\n\n` +
+        `"${group.name}" guruhiga yozilish uchun avval ro'yxatdan o'tishingiz kerak.\n` +
+        `Iltimos, telefon raqamingizni ulashing.`;
+
+      const keyboard = this.telegramApi.buildReplyKeyboard([
+        [{ text: '📱 Telefon raqamni ulashish', request_contact: true }],
+      ]);
+
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        welcomeMessage,
+        { reply_markup: keyboard },
+      );
+    }
+  }
+
+  /**
+   * Show group info and payment options
+   */
+  private async showGroupInfoWithPayments(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    group: any,
+  ) {
+    let message = `📚 <b>${group.name}</b>\n\n`;
+    if (group.description) {
+      message += `📝 ${group.description}\n\n`;
+    }
+    message += `💰 Narx: ${parseInt(group.monthlyPrice)} so'm/oy\n`;
+
+    // Add schedule info
+    const schedules = await this.prisma.lessonSchedule.findMany({
+      where: { groupId: group.id },
+      orderBy: { dayOfWeek: 'asc' },
+    });
+
+    if (schedules.length > 0) {
+      message += `📅 Dars vaqtlari:\n`;
+      const days = ['Yak', 'Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
+      schedules.forEach((s) => {
+        message += `• ${days[s.dayOfWeek % 7]}: ${s.startTime}-${s.endTime}\n`;
+      });
+      message += `\n`;
+    }
+
+    message += `To'lov turini tanlang: 👇`;
+
+    // Build buttons
+    const buttons: any[] = [];
+
+    // Monthly payment button
+    buttons.push([
+      {
+        text: `1 oyga to'lov - ${parseInt(group.monthlyPrice)} so'm`,
+        callback_data: `pay_${group.id}_1`,
+      },
+    ]);
+
+    // Discount buttons
+    if (group.groupDiscounts && group.groupDiscounts.length > 0) {
+      group.groupDiscounts.forEach((discount: any) => {
+        const months = discount.months;
+        const total =
+          Number(group.monthlyPrice) * months - Number(discount.discountAmount);
+        buttons.push([
+          {
+            text: `${months} oyga to'lov - ${total} so'm`,
+            callback_data: `pay_${group.id}_${months}`,
+          },
+        ]);
+      });
+    }
+
+    await this.sendMessageToUser(bot, telegramUser.chatId || '', message, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: buttons,
+      },
+    });
+  }
+
+  /**
+   * Handle last name input (for /start registration flow)
+   * Creates User and Student records upon completion
+   */
+  private async handleStartRegistrationLastName(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    text: string,
+  ) {
+    const lastName = text.trim();
+
+    if (lastName.length < 2) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Iltimos, familiyangizni to'liq kiriting (kamida 2 harf).",
+      );
+      return;
+    }
+
+    // Reload telegramUser to get latest phoneNumber and firstName
+    const freshTelegramUser = await this.prisma.telegramUser.findUnique({
+      where: { id: telegramUser.id },
+    });
+
+    if (!freshTelegramUser || !freshTelegramUser.phoneNumber) {
+      this.logger.error(
+        `TelegramUser ${telegramUser.id} missing phone number for registration`,
+      );
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Xatolik yuz berdi. Iltimos, /start buyrug'ini qayta yuboring.",
+      );
+      return;
+    }
+
+    // Generate random password
+    const password = this.generateRandomPassword();
+    let newUser: any;
+
+    try {
+      // Create new User and Student in a transaction
+      await this.prisma.$transaction(async (tx) => {
+        // Create User with STUDENT role
+        newUser = await tx.user.create({
+          data: {
+            firstName: freshTelegramUser.firstName || '',
+            lastName,
+            phoneNumber: freshTelegramUser.phoneNumber as string,
+            password, // In production, should be hashed
+            userType: 'STUDENT', // Assuming UserType is an enum or string literal
+            authProvider: 'telegram',
+            centerId: bot.centerId,
+            telegramUserId: telegramUser.id,
+          },
+        });
+
+        // Create Student record
+        await tx.student.create({
+          data: {
+            userId: newUser.id,
+            centerId: bot.centerId,
+            firstName: freshTelegramUser.firstName || '',
+            lastName,
+          },
+        });
+
+        // Clear the userStep and update lastName
+        await tx.telegramUser.update({
+          where: { id: telegramUser.id },
+          data: {
+            lastName,
+            userStep: null,
+          },
+        });
+
+        this.logger.log(
+          `Created User ${newUser.id} and Student for TelegramUser ${telegramUser.id}`,
+        );
+      });
+
+      // Check for pending group join
+      const botState = await this.prisma.studentBotState.findUnique({
+        where: {
+          telegramUserId_centerId: {
+            telegramUserId: telegramUser.id,
+            centerId: bot.centerId,
+          },
+        },
+      });
+
+      if (botState && botState.groupId) {
+        // User had intent to join a group - redirect to group info
+        await this.sendMessageToUser(
+          bot,
+          telegramUser.chatId || '',
+          `✅ Ro'yxatdan o'tish muvaffaqiyatli yakunlandi!`,
+        );
+
+        // Pass fresh user object to handleGroupJoin
+        await this.handleGroupJoin(
+          bot,
+          { ...telegramUser, user: newUser } as any,
+          botState.groupId,
+        );
+        return;
+      }
+
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        `✅ Ro'yxatdan o'tdingiz!\n\n` +
+          `👤 Ism: ${freshTelegramUser.firstName} ${lastName}\n` +
+          `📱 Telefon: ${freshTelegramUser.phoneNumber}\n\n` +
+          `Kurslarimiz haqida ma'lumot olish uchun /menu buyrug'ini yuboring.`,
+      );
+    } catch (error) {
+      this.logger.error(`Error creating user: ${error}`);
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        "❌ Ro'yxatdan o'tishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
+      );
+    }
+  }
+  /**
    * Handle /start command
    */
   private async handleStartCommand(
@@ -594,6 +894,15 @@ export class TelegramService {
   ) {
     // Parse start parameter (e.g., /start course_ABC123 or /start UUID)
     if (param) {
+      // Handle group join link: /start group_<id>
+      if (param.startsWith('group_')) {
+        const groupId = parseInt(param.replace('group_', ''), 10);
+        if (!isNaN(groupId)) {
+          await this.handleGroupJoin(bot, telegramUser, groupId);
+          return;
+        }
+      }
+
       if (param.startsWith('course_')) {
         const courseToken = param.replace('course_', '');
         await this.handleCourseEnrollment(bot, telegramUser, courseToken);
@@ -1062,105 +1371,6 @@ export class TelegramService {
       telegramUser.chatId || '',
       `✅ Rahmat, ${firstName}!\n\nEndi familiyangizni kiriting:`,
     );
-  }
-
-  /**
-   * Handle last name input (for /start registration flow)
-   * Creates User and Student records upon completion
-   */
-  private async handleStartRegistrationLastName(
-    bot: TelegramBotWithCenter,
-    telegramUser: TelegramUserWithUser,
-    text: string,
-  ) {
-    const lastName = text.trim();
-
-    if (lastName.length < 2) {
-      await this.sendMessageToUser(
-        bot,
-        telegramUser.chatId || '',
-        "❌ Iltimos, familiyangizni to'liq kiriting (kamida 2 harf).",
-      );
-      return;
-    }
-
-    // Reload telegramUser to get latest phoneNumber and firstName
-    const freshTelegramUser = await this.prisma.telegramUser.findUnique({
-      where: { id: telegramUser.id },
-    });
-
-    if (!freshTelegramUser || !freshTelegramUser.phoneNumber) {
-      this.logger.error(
-        `TelegramUser ${telegramUser.id} missing phone number for registration`,
-      );
-      await this.sendMessageToUser(
-        bot,
-        telegramUser.chatId || '',
-        "❌ Xatolik yuz berdi. Iltimos, /start buyrug'ini qayta yuboring.",
-      );
-      return;
-    }
-
-    // Generate random password
-    const password = this.generateRandomPassword();
-
-    try {
-      // Create new User and Student in a transaction
-      await this.prisma.$transaction(async (tx) => {
-        // Create User with STUDENT role
-        const newUser = await tx.user.create({
-          data: {
-            firstName: freshTelegramUser.firstName || '',
-            lastName,
-            phoneNumber: freshTelegramUser.phoneNumber as string,
-            password, // In production, should be hashed
-            userType: UserType.STUDENT,
-            authProvider: 'telegram',
-            centerId: bot.centerId,
-            telegramUserId: telegramUser.id,
-          },
-        });
-
-        // Create Student record
-        await tx.student.create({
-          data: {
-            userId: newUser.id,
-            centerId: bot.centerId,
-            firstName: freshTelegramUser.firstName || '',
-            lastName,
-          },
-        });
-
-        // Clear the userStep and update lastName
-        await tx.telegramUser.update({
-          where: { id: telegramUser.id },
-          data: {
-            lastName,
-            userStep: null,
-          },
-        });
-
-        this.logger.log(
-          `Created User ${newUser.id} and Student for TelegramUser ${telegramUser.id}`,
-        );
-      });
-
-      await this.sendMessageToUser(
-        bot,
-        telegramUser.chatId || '',
-        `✅ Ro'yxatdan o'tdingiz!\n\n` +
-          `👤 Ism: ${freshTelegramUser.firstName} ${lastName}\n` +
-          `📱 Telefon: ${freshTelegramUser.phoneNumber}\n\n` +
-          `Kurslarimiz haqida ma'lumot olish uchun /menu buyrug'ini yuboring.`,
-      );
-    } catch (error) {
-      this.logger.error(`Error creating user: ${error}`);
-      await this.sendMessageToUser(
-        bot,
-        telegramUser.chatId || '',
-        "❌ Ro'yxatdan o'tishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
-      );
-    }
   }
 
   /**

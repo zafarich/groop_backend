@@ -424,8 +424,26 @@ export class GroupsService {
 
     this.logger.log('✅ Bot has all required permissions');
 
-    // 4. Update group in transaction (atomicity guaranteed)
-    // Note: Join link will be generated later when student payment is approved
+    // 4. Get bot username for join link generation
+    const bot = await this.prisma.centerTelegramBot.findFirst({
+      where: {
+        centerId: group.centerId,
+        isActive: true,
+        isDeleted: false,
+      },
+    });
+
+    if (!bot?.botUsername) {
+      throw new BadRequestException(
+        'Bot username not configured for this center. Please update bot settings.',
+      );
+    }
+
+    // Generate join link for students
+    const joinLink = `https://t.me/${bot.botUsername}?start=group_${group.id}`;
+    this.logger.log(`Generated join link: ${joinLink}`);
+
+    // 5. Update group in transaction (atomicity guaranteed)
     const updatedGroup = await this.prisma.$transaction(async (tx) => {
       // Double-check telegram group ID uniqueness inside transaction
       const conflictCheck = await tx.group.findFirst({
@@ -442,12 +460,13 @@ export class GroupsService {
         );
       }
 
-      // Update the group (joinLink will be set later when student payment is approved)
+      // Update the group with join link
       return tx.group.update({
         where: { id: group.id },
         data: {
           telegramGroupId: chatId,
           status: 'ACTIVE',
+          joinLink, // Save join link for students
           connectToken: null, // Clear token after successful connection
           connectTokenExpires: null,
           updatedAt: new Date(),
@@ -475,7 +494,7 @@ export class GroupsService {
         this.eventsGateway.emitGroupConnected(
           updatedGroup.centerId,
           updatedGroup.id,
-          updatedGroup.joinLink || '', // joinLink will be null at this point
+          updatedGroup.joinLink || '',
           updatedGroup.telegramGroupId,
         );
         this.logger.log(
