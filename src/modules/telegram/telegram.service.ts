@@ -589,9 +589,13 @@ export class TelegramService {
    */
   private async handleGroupJoin(
     bot: TelegramBotWithCenter,
-    telegramUser: TelegramUserWithUser,
+    telegramUserWithUser: TelegramUserWithUser,
     groupId: number,
   ) {
+    this.logger.log(
+      `handleGroupJoin request for user ${telegramUserWithUser.id} group ${groupId}`,
+    );
+
     // 1. Find group
     const group = await this.prisma.group.findUnique({
       where: {
@@ -610,14 +614,17 @@ export class TelegramService {
     if (!group || group.status !== 'ACTIVE') {
       await this.sendMessageToUser(
         bot,
-        telegramUser.chatId || '',
+        telegramUserWithUser.chatId || '',
         '❌ Guruh topilmadi yoki faol emas.',
       );
       return;
     }
 
     // 2. If user is registered, create enrollment (lead) and show info
-    if (telegramUser.user) {
+    if (telegramUserWithUser.user) {
+      this.logger.log(
+        `User ${telegramUserWithUser.id} is registered, showing group info`,
+      );
       // Create or update enrollment
       await this.prisma.enrollment.upsert({
         where: {
@@ -626,7 +633,7 @@ export class TelegramService {
             studentId:
               (
                 await this.prisma.student.findFirst({
-                  where: { userId: telegramUser.user.id },
+                  where: { userId: telegramUserWithUser.user.id },
                 })
               )?.id || 0, // Should always exist for registered users
           },
@@ -635,7 +642,7 @@ export class TelegramService {
           groupId: group.id,
           studentId: (
             await this.prisma.student.findFirstOrThrow({
-              where: { userId: telegramUser.user.id },
+              where: { userId: telegramUserWithUser.user.id },
             })
           ).id,
           status: 'ACTIVE', // Or PENDING/LEAD based on requirements, using active as lead
@@ -647,31 +654,36 @@ export class TelegramService {
         update: {}, // Already enrolled, just show info
       });
 
-      await this.showGroupInfoWithPayments(bot, telegramUser, group);
+      await this.showGroupInfoWithPayments(bot, telegramUserWithUser, group);
     } else {
+      this.logger.log(
+        `User ${telegramUserWithUser.id} NOT registered, saving intent to StudentBotState`,
+      );
       // 3. User not registered - save intent and start registration
       await this.prisma.studentBotState.upsert({
         where: {
           telegramUserId_centerId: {
-            telegramUserId: telegramUser.id,
+            telegramUserId: telegramUserWithUser.id,
             centerId: bot.centerId,
           },
         },
         create: {
-          telegramUserId: telegramUser.id,
+          telegramUserId: telegramUserWithUser.id,
           centerId: bot.centerId,
           groupId: group.id,
           currentStep: 'share_contact',
+          isDeleted: false,
         },
         update: {
           groupId: group.id,
           currentStep: 'share_contact',
+          isDeleted: false,
         },
       });
 
       // Start registration flow
       await this.prisma.telegramUser.update({
-        where: { id: telegramUser.id },
+        where: { id: telegramUserWithUser.id },
         data: { userStep: 'share_contact' },
       });
 
@@ -686,7 +698,7 @@ export class TelegramService {
 
       await this.sendMessageToUser(
         bot,
-        telegramUser.chatId || '',
+        telegramUserWithUser.chatId || '',
         welcomeMessage,
         { reply_markup: keyboard },
       );
@@ -841,6 +853,9 @@ export class TelegramService {
       });
 
       // Check for pending group join
+      this.logger.log(
+        `Checking pending group join for user ${telegramUser.id} center ${bot.centerId}`,
+      );
       const botState = await this.prisma.studentBotState.findUnique({
         where: {
           telegramUserId_centerId: {
@@ -849,6 +864,10 @@ export class TelegramService {
           },
         },
       });
+
+      this.logger.log(
+        `Bot state found: ${botState ? JSON.stringify(botState) : 'null'}`,
+      );
 
       if (botState && botState.groupId) {
         // User had intent to join a group - redirect to group info
@@ -859,11 +878,12 @@ export class TelegramService {
         );
 
         // Pass fresh user object to handleGroupJoin
-        await this.handleGroupJoin(
-          bot,
-          { ...telegramUser, user: newUser } as any,
-          botState.groupId,
-        );
+        const fullTelegramUser = {
+          ...freshTelegramUser,
+          user: newUser,
+        } as unknown as TelegramUserWithUser;
+
+        await this.handleGroupJoin(bot, fullTelegramUser, botState.groupId);
         return;
       }
 
