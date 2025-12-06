@@ -988,10 +988,12 @@ export class TelegramService {
     param?: string,
   ) {
     // Parse start parameter (e.g., /start course_ABC123 or /start UUID)
+    this.logger.log('PARAM', param);
     if (param) {
       // Handle group join link: /start group_<id>
       if (param.startsWith('group_')) {
         const groupId = parseInt(param.replace('group_', ''), 10);
+        this.logger.log('groupId', groupId);
         if (!isNaN(groupId)) {
           await this.handleGroupJoin(bot, telegramUser, groupId);
           return;
