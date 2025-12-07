@@ -2421,29 +2421,66 @@ export class TelegramService {
           parse_mode: 'HTML',
         });
       } else {
-        // Paid enrollment with discount - show payment button
+        // Paid enrollment with discount
         const customPrice = Number(enrollment.customMonthlyPrice);
-        const message =
-          `💰 <b>Maxsus narx belgilandi</b>\n\n` +
-          `📚 Guruh: <b>${enrollment.group.name}</b>\n` +
-          `💵 Siz uchun kurs to'lovi <b>${formatPrice(customPrice)} so'm</b> etib belgilandi.\n\n` +
-          `To'lash uchun pastdagi tugmani bosing 👇`;
+        const currentBalance = Number(enrollment.balance);
 
-        const buttons = [
-          [
-            {
-              text: `💳 ${formatPrice(customPrice)} so'm to'lash`,
-              callback_data: `pay:${enrollment.groupId}:1`,
+        let message = `💰 <b>Maxsus narx belgilandi</b>\n\n`;
+        message += `📚 Guruh: <b>${enrollment.group.name}</b>\n`;
+        message += `💵 Siz uchun kurs to'lovi <b>${formatPrice(customPrice)} so'm</b> etib belgilandi.\n\n`;
+
+        // Check if student is ACTIVE with existing balance
+        if (enrollment.status === 'ACTIVE' && currentBalance > 0) {
+          // Student has positive balance - no immediate payment needed
+          message += `✅ Sizning hisobingizda <b>${formatPrice(currentBalance)} so'm</b> mavjud.\n`;
+          message += `Bu mablag' yangi narx bo'yicha darslaringizni qoplash uchun ishlatiladi.\n\n`;
+          message += `🎓 Darslaringiz davom etaveradi!`;
+
+          // No payment button needed
+          await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+            parse_mode: 'HTML',
+          });
+        } else if (enrollment.status === 'ACTIVE' && currentBalance < 0) {
+          // Student has debt - show current debt
+          message += `⚠️ Hozirgi qarzingiz: <b>${formatPrice(Math.abs(currentBalance))} so'm</b>\n`;
+          message += `Yangi narx: <b>${formatPrice(customPrice)} so'm/oy</b>\n\n`;
+          message += `To'lash uchun pastdagi tugmani bosing 👇`;
+
+          const buttons = [
+            [
+              {
+                text: `💳 ${formatPrice(customPrice)} so'm to'lash`,
+                callback_data: `pay:${enrollment.groupId}:1`,
+              },
+            ],
+          ];
+
+          await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: buttons,
             },
-          ],
-        ];
+          });
+        } else {
+          // LEAD or TRIAL status - show payment button
+          message += `To'lash uchun pastdagi tugmani bosing 👇`;
 
-        await this.sendMessageToUser(bot, telegramUser.chatId, message, {
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: buttons,
-          },
-        });
+          const buttons = [
+            [
+              {
+                text: `💳 ${formatPrice(customPrice)} so'm to'lash`,
+                callback_data: `pay:${enrollment.groupId}:1`,
+              },
+            ],
+          ];
+
+          await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: buttons,
+            },
+          });
+        }
       }
 
       this.logger.log(

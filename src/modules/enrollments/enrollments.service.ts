@@ -264,7 +264,9 @@ export class EnrollmentsService {
 
     // Get effective monthly price (custom or group price)
     const effectiveMonthlyPrice = this.getEffectiveMonthlyPrice(
-      enrollment.customMonthlyPrice ? Number(enrollment.customMonthlyPrice) : null,
+      enrollment.customMonthlyPrice
+        ? Number(enrollment.customMonthlyPrice)
+        : null,
       enrollment.discountStartDate,
       enrollment.discountEndDate,
       Number(enrollment.group.monthlyPrice),
@@ -324,7 +326,9 @@ export class EnrollmentsService {
 
     // Get effective monthly price (custom or group price)
     const effectiveMonthlyPrice = this.getEffectiveMonthlyPrice(
-      enrollment.customMonthlyPrice ? Number(enrollment.customMonthlyPrice) : null,
+      enrollment.customMonthlyPrice
+        ? Number(enrollment.customMonthlyPrice)
+        : null,
       enrollment.discountStartDate,
       enrollment.discountEndDate,
       Number(enrollment.group.monthlyPrice),
@@ -400,7 +404,7 @@ export class EnrollmentsService {
   }
 
   /**
-   * Assign or update custom pricing for an enrollment
+   * Assign or update custom pricing for an enrollment (Balance-based approach)
    * @param enrollmentId - Enrollment ID
    * @param dto - Custom price details (customMonthlyPrice, discountStartDate, discountEndDate, discountReason)
    */
@@ -413,34 +417,69 @@ export class EnrollmentsService {
     // Parse dates
     const discountStartDate = dto.discountStartDate
       ? new Date(dto.discountStartDate)
-      : null;
+      : new Date(); // Default to now if not provided
     const discountEndDate = dto.discountEndDate
       ? new Date(dto.discountEndDate)
       : null;
 
-    // Calculate new per-lesson price if enrollment is already active
-    let perLessonPrice = Number(enrollment.perLessonPrice);
-    if (enrollment.status === 'ACTIVE' && enrollment.lessonStartDate) {
-      const effectiveMonthlyPrice = this.getEffectiveMonthlyPrice(
-        dto.customMonthlyPrice,
-        discountStartDate,
-        discountEndDate,
-        Number(enrollment.group.monthlyPrice),
-        new Date(), // Current date for checking validity
-      );
+    // Calculate new per-lesson price based on new monthly price
+    const schedules = enrollment.group.lessonSchedules;
+    const lessonsPerMonth = this.countLessonsInMonth(schedules);
+    const groupMonthlyPrice = Number(enrollment.group.monthlyPrice);
 
-      const proration = this.calculateProratedPrice(
-        enrollment.group,
-        enrollment.group.lessonSchedules,
-        enrollment.lessonStartDate,
-        effectiveMonthlyPrice,
+    // New lesson price after discount
+    const newLessonPrice =
+      lessonsPerMonth > 0
+        ? Math.round(dto.customMonthlyPrice / lessonsPerMonth)
+        : 0;
+
+    // Base lesson price (from group, for reference)
+    const baseLessonPrice =
+      lessonsPerMonth > 0 ? Math.round(groupMonthlyPrice / lessonsPerMonth) : 0;
+
+    // Balance-based logic for ACTIVE students
+    let balanceAdjustmentInfo: {
+      oldLessonPrice: number;
+      newLessonPrice: number;
+      priceDifference: number;
+      currentBalance: number;
+      message: string;
+    } | null = null;
+    const currentBalance = Number(enrollment.balance);
+
+    if (enrollment.status === 'ACTIVE') {
+      // Calculate how the discount affects the student
+      const oldLessonPrice = Number(enrollment.perLessonPrice);
+      const priceDifference = oldLessonPrice - newLessonPrice;
+
+      balanceAdjustmentInfo = {
+        oldLessonPrice,
+        newLessonPrice,
+        priceDifference,
+        currentBalance,
+        message:
+          priceDifference > 0
+            ? `Discount applied. Lesson price reduced from ${oldLessonPrice} to ${newLessonPrice}. ` +
+              `Student's existing balance (${currentBalance}) remains valid and will cover more lessons.`
+            : priceDifference < 0
+              ? `Price increased from ${oldLessonPrice} to ${newLessonPrice}. ` +
+                `Student's balance (${currentBalance}) will cover fewer lessons.`
+              : 'Price unchanged.',
+      };
+
+      this.logger.log(
+        `Balance-based discount for enrollment ${enrollmentId}: ` +
+          `Old price: ${oldLessonPrice}, New price: ${newLessonPrice}, ` +
+          `Current balance: ${currentBalance}, Difference: ${priceDifference}`,
       );
-      perLessonPrice = proration.effectiveLessonPrice;
     }
 
     // If free enrollment (0), automatically activate
     let newStatus = enrollment.status;
-    if (isFreeEnrollment && (enrollment.status === 'LEAD' || enrollment.status === 'TRIAL')) {
+    if (
+      isFreeEnrollment &&
+      (enrollment.status === 'LEAD' || enrollment.status === 'TRIAL')
+    ) {
       newStatus = 'ACTIVE';
     }
 
@@ -452,8 +491,11 @@ export class EnrollmentsService {
         discountEndDate,
         discountReason: dto.discountReason,
         isFreeEnrollment,
-        perLessonPrice,
+        perLessonPrice: newLessonPrice,
+        baseLessonPrice,
         status: newStatus,
+        // Note: balance is NOT changed - existing payments remain valid
+        // The new lesson price will be used for future lesson deductions
       },
       include: {
         group: true,
@@ -475,6 +517,7 @@ export class EnrollmentsService {
 
     this.logger.log(
       `Updated custom price for enrollment ${enrollmentId}: ${dto.customMonthlyPrice} UZS, ` +
+        `Lesson price: ${newLessonPrice}, ` +
         `valid from ${dto.discountStartDate || 'now'} to ${dto.discountEndDate || 'forever'}` +
         (dto.discountReason ? `, reason: ${dto.discountReason}` : ''),
     );
@@ -484,9 +527,19 @@ export class EnrollmentsService {
       code: 0,
       data: updatedEnrollment,
       message: 'Custom price assigned successfully',
-      shouldNotifyStudent: true, // Flag to indicate notification needed
+      shouldNotifyStudent: true,
       isFreeEnrollment,
+      balanceInfo: balanceAdjustmentInfo, // Additional info for admin
     };
+  }
+
+  /**
+   * Count average lessons per month based on schedule
+   */
+  private countLessonsInMonth(schedules: LessonSchedule[]): number {
+    // Assuming 4 weeks per month on average
+    const lessonsPerWeek = schedules.length;
+    return lessonsPerWeek * 4;
   }
 
   /**
