@@ -402,7 +402,7 @@ export class EnrollmentsService {
   /**
    * Assign or update custom pricing for an enrollment
    * @param enrollmentId - Enrollment ID
-   * @param dto - Custom price details (customMonthlyPrice, discountStartDate, discountEndDate)
+   * @param dto - Custom price details (customMonthlyPrice, discountStartDate, discountEndDate, discountReason)
    */
   async assignDiscount(enrollmentId: number, dto: AssignDiscountDto) {
     const enrollment = await this.findOneRaw(enrollmentId);
@@ -438,14 +438,22 @@ export class EnrollmentsService {
       perLessonPrice = proration.effectiveLessonPrice;
     }
 
+    // If free enrollment (0), automatically activate
+    let newStatus = enrollment.status;
+    if (isFreeEnrollment && (enrollment.status === 'LEAD' || enrollment.status === 'TRIAL')) {
+      newStatus = 'ACTIVE';
+    }
+
     const updatedEnrollment = await this.prisma.enrollment.update({
       where: { id: enrollmentId },
       data: {
         customMonthlyPrice: dto.customMonthlyPrice,
         discountStartDate,
         discountEndDate,
+        discountReason: dto.discountReason,
         isFreeEnrollment,
         perLessonPrice,
+        status: newStatus,
       },
       include: {
         group: true,
@@ -457,6 +465,7 @@ export class EnrollmentsService {
                 firstName: true,
                 lastName: true,
                 phoneNumber: true,
+                telegramUserId: true,
               },
             },
           },
@@ -466,7 +475,8 @@ export class EnrollmentsService {
 
     this.logger.log(
       `Updated custom price for enrollment ${enrollmentId}: ${dto.customMonthlyPrice} UZS, ` +
-        `valid from ${dto.discountStartDate || 'now'} to ${dto.discountEndDate || 'forever'}`,
+        `valid from ${dto.discountStartDate || 'now'} to ${dto.discountEndDate || 'forever'}` +
+        (dto.discountReason ? `, reason: ${dto.discountReason}` : ''),
     );
 
     return {
@@ -474,6 +484,8 @@ export class EnrollmentsService {
       code: 0,
       data: updatedEnrollment,
       message: 'Custom price assigned successfully',
+      shouldNotifyStudent: true, // Flag to indicate notification needed
+      isFreeEnrollment,
     };
   }
 

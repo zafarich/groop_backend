@@ -7,6 +7,8 @@ import {
   Body,
   ParseIntPipe,
   UseGuards,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { EnrollmentsService } from './enrollments.service';
 import {
@@ -20,11 +22,16 @@ import { CenterOwnershipGuard } from '../../common/guards/center-ownership.guard
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CheckCenterOwnership } from '../../common/decorators/check-center-ownership.decorator';
 import { ActiveCenterId } from '../../common/decorators/active-center.decorator';
+import { TelegramService } from '../telegram/telegram.service';
 
 @Controller('enrollments')
 @UseGuards(JwtAuthGuard, PermissionsGuard, CenterOwnershipGuard)
 export class EnrollmentsController {
-  constructor(private readonly enrollmentsService: EnrollmentsService) {}
+  constructor(
+    private readonly enrollmentsService: EnrollmentsService,
+    @Inject(forwardRef(() => TelegramService))
+    private readonly telegramService: TelegramService,
+  ) {}
 
   @Get('leads')
   @RequirePermissions('enrollment.read')
@@ -69,11 +76,21 @@ export class EnrollmentsController {
   @Patch(':id/discount')
   @RequirePermissions('enrollment.update')
   @CheckCenterOwnership({ resourceName: 'enrollment' })
-  assignDiscount(
+  async assignDiscount(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AssignDiscountDto,
   ) {
-    return this.enrollmentsService.assignDiscount(id, dto);
+    const result = await this.enrollmentsService.assignDiscount(id, dto);
+
+    // Send notification to student via Telegram
+    if (result.shouldNotifyStudent && result.data) {
+      await this.telegramService.notifyStudentAboutDiscount(
+        result.data,
+        result.isFreeEnrollment,
+      );
+    }
+
+    return result;
   }
 }
 

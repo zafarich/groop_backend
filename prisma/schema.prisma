@@ -677,6 +677,7 @@ model Enrollment {
   customMonthlyPrice  Decimal?  @db.Decimal(10, 2)  // Custom monthly price (null = group price, 0 = free)
   discountStartDate   DateTime?                     // When custom price becomes active
   discountEndDate     DateTime?                     // When custom price expires (after this, group price applies)
+  discountReason      String?   @db.Text            // Reason for discount (optional, for admin notes)
   isFreeEnrollment    Boolean   @default(false)     // Explicit flag for 0 price (set when customMonthlyPrice = 0)
   
   // Per-lesson pricing (calculated based on current effective price)

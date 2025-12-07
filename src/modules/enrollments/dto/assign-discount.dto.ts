@@ -3,6 +3,7 @@ import {
   Min,
   IsOptional,
   IsDateString,
+  IsString,
 } from 'class-validator';
 
 export class AssignDiscountDto {
@@ -17,4 +18,8 @@ export class AssignDiscountDto {
   @IsOptional()
   @IsDateString()
   discountEndDate?: string; // When custom price expires (after this, group price applies)
+
+  @IsOptional()
+  @IsString()
+  discountReason?: string; // Reason for discount (optional, for admin notes)
 }

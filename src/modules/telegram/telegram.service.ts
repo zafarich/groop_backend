@@ -2359,4 +2359,100 @@ export class TelegramService {
   ) {
     return this.telegramApi.sendMessage(bot.botToken, chatId, text, options);
   }
+
+  /**
+   * Notify student about custom discount assignment
+   * Public method to be called from EnrollmentsController
+   */
+  async notifyStudentAboutDiscount(enrollment: any, isFreeEnrollment: boolean) {
+    // Check if student has telegram user linked
+    if (!enrollment.student?.user?.telegramUserId) {
+      this.logger.warn(
+        `Student ${enrollment.studentId} has no Telegram account linked`,
+      );
+      return;
+    }
+
+    // Get telegram user
+    const telegramUser = await this.prisma.telegramUser.findUnique({
+      where: { id: enrollment.student.user.telegramUserId },
+    });
+
+    if (!telegramUser || !telegramUser.chatId) {
+      this.logger.warn(
+        `TelegramUser not found or no chatId for student ${enrollment.studentId}`,
+      );
+      return;
+    }
+
+    // Get bot for this center
+    const bot = await this.prisma.centerTelegramBot.findFirst({
+      where: {
+        centerId: enrollment.group.centerId,
+        isActive: true,
+        isDeleted: false,
+      },
+      include: {
+        center: true,
+      },
+    });
+
+    if (!bot) {
+      this.logger.warn(
+        `No active bot found for center ${enrollment.group.centerId}`,
+      );
+      return;
+    }
+
+    // Format price
+    const formatPrice = (price: number) => {
+      return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    };
+
+    try {
+      if (isFreeEnrollment) {
+        // Free enrollment - just notify about group access
+        const message =
+          `🎉 <b>Tabriklaymiz!</b>\n\n` +
+          `Siz "<b>${enrollment.group.name}</b>" guruhiga qo'shildingiz!\n\n` +
+          `Darslar bepul taqdim etiladi. Omad tilaymiz! 🎓`;
+
+        await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+          parse_mode: 'HTML',
+        });
+      } else {
+        // Paid enrollment with discount - show payment button
+        const customPrice = Number(enrollment.customMonthlyPrice);
+        const message =
+          `💰 <b>Maxsus narx belgilandi</b>\n\n` +
+          `📚 Guruh: <b>${enrollment.group.name}</b>\n` +
+          `💵 Siz uchun kurs to'lovi <b>${formatPrice(customPrice)} so'm</b> etib belgilandi.\n\n` +
+          `To'lash uchun pastdagi tugmani bosing 👇`;
+
+        const buttons = [
+          [
+            {
+              text: `💳 ${formatPrice(customPrice)} so'm to'lash`,
+              callback_data: `pay:${enrollment.groupId}:1`,
+            },
+          ],
+        ];
+
+        await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: buttons,
+          },
+        });
+      }
+
+      this.logger.log(
+        `Sent discount notification to student ${enrollment.studentId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send discount notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
 }
