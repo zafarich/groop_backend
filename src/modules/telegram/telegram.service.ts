@@ -1814,8 +1814,18 @@ export class TelegramService {
 
     // Check if admin is entering rejection reason
     if (currentStep.startsWith('waiting_rejection_reason:')) {
-      const paymentId = currentStep.split(':')[1];
-      await this.handleRejectionReasonInput(bot, telegramUser, text, paymentId);
+      const parts = currentStep.split(':');
+      const paymentId = parts[1];
+      const messageId = parts[2] ? parseInt(parts[2], 10) : undefined;
+      const chatId = parts[3] ? parseInt(parts[3], 10) : undefined;
+      await this.handleRejectionReasonInput(
+        bot,
+        telegramUser,
+        text,
+        paymentId,
+        messageId,
+        chatId,
+      );
       return;
     }
 
@@ -2847,9 +2857,12 @@ export class TelegramService {
     }
 
     // Set admin state to wait for rejection reason
+    // Store message info in metadata for later update
     await this.prisma.telegramUser.update({
       where: { id: telegramUser.id },
-      data: { userStep: `waiting_rejection_reason:${paymentId}` },
+      data: {
+        userStep: `waiting_rejection_reason:${paymentId}:${callbackQuery.message.message_id}:${callbackQuery.message.chat.id}`,
+      },
     });
 
     await this.telegramApi.answerCallbackQuery(
@@ -2873,13 +2886,16 @@ export class TelegramService {
     telegramUser: TelegramUserWithUser,
     reason: string,
     paymentId: string,
+    originalMessageId?: number,
+    originalChatId?: number,
   ) {
     this.logger.log(
-      `Processing rejection reason for payment ${paymentId} from admin ${telegramUser.id}`,
+      `Processing rejection reason for payment ${paymentId} from admin ${telegramUser.id}, reason: "${reason}"`,
     );
 
     const paymentIdNum = parseInt(paymentId, 10);
     if (isNaN(paymentIdNum)) {
+      this.logger.error(`Invalid payment ID: ${paymentId}`);
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
@@ -2943,6 +2959,10 @@ export class TelegramService {
       // Send rejection message to student
       const studentTelegramUser = payment.student.user?.telegramUser;
       if (studentTelegramUser?.chatId) {
+        this.logger.log(
+          `Sending rejection message to student ${payment.student.id} at chatId ${studentTelegramUser.chatId}`,
+        );
+
         const formatPrice = (price: number) =>
           price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 
@@ -2960,13 +2980,28 @@ export class TelegramService {
             parse_mode: 'HTML',
           },
         );
+
+        this.logger.log(`Rejection message sent to student successfully`);
+      } else {
+        this.logger.warn(
+          `Student ${payment.student.id} has no telegram chatId, cannot send rejection message`,
+        );
       }
 
-      // Confirm to admin
+      // Confirm to admin and send detailed message
+      let confirmMessage = "✅ <b>To'lov bekor qilindi</b>\n\n";
+      confirmMessage += `💰 Summa: ${formatPrice(Number(payment.amount))} so'm\n`;
+      confirmMessage += `📚 Guruh: ${payment.group.name}\n`;
+      confirmMessage += `📝 Sabab: ${reason}\n\n`;
+      confirmMessage += `Talabaga xabar yuborildi.`;
+
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        "✅ To'lov bekor qilindi va talabaga xabar yuborildi.",
+        confirmMessage,
+        {
+          parse_mode: 'HTML',
+        },
       );
 
       this.logger.log(
