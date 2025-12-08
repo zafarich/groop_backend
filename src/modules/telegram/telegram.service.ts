@@ -582,6 +582,30 @@ export class TelegramService {
       case 'cancel_enrollment':
         await this.handleCancelEnrollment(bot, chatId, params);
         break;
+      case 'approve_payment':
+        await this.handleApprovePayment(
+          bot,
+          telegramUser as TelegramUserWithUser,
+          params[0],
+          callbackQuery,
+        );
+        break;
+      case 'reject_payment':
+        await this.handleRejectPayment(
+          bot,
+          telegramUser as TelegramUserWithUser,
+          params[0],
+          callbackQuery,
+        );
+        break;
+      case 'change_payment_decision':
+        await this.handleChangePaymentDecision(
+          bot,
+          telegramUser as TelegramUserWithUser,
+          params[0],
+          callbackQuery,
+        );
+        break;
       default:
         this.logger.warn(`Unknown callback action: ${action}`);
     }
@@ -647,6 +671,8 @@ export class TelegramService {
         selectedMonths: months,
         currentStep: 'waiting_receipt',
         metadata: {
+          amount: totalAmount,
+          months: months,
           totalAmount,
           discountAmount,
           monthlyPrice,
@@ -659,6 +685,8 @@ export class TelegramService {
         selectedMonths: months,
         currentStep: 'waiting_receipt',
         metadata: {
+          amount: totalAmount,
+          months: months,
           totalAmount,
           discountAmount,
           monthlyPrice,
@@ -1775,6 +1803,13 @@ export class TelegramService {
       return;
     }
 
+    // Check if admin is entering rejection reason
+    if (currentStep.startsWith('waiting_rejection_reason:')) {
+      const paymentId = currentStep.split(':')[1];
+      await this.handleRejectionReasonInput(bot, telegramUser, text, paymentId);
+      return;
+    }
+
     // Route to appropriate handler based on current step
     switch (currentStep) {
       // /start registration flow steps
@@ -2200,6 +2235,18 @@ export class TelegramService {
     const amount = metadata.amount;
     const months = metadata.months;
 
+    if (!amount || !months) {
+      this.logger.error(
+        `Missing amount or months in metadata for user ${telegramUser.id}`,
+      );
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Xatolik yuz berdi. Iltimos, qaytadan boshlang.',
+      );
+      return;
+    }
+
     // Ensure user has a linked User record
     let linkedUser = telegramUser.user;
     if (!linkedUser) {
@@ -2252,6 +2299,23 @@ export class TelegramService {
       this.logger.log(`Created Student record ${student.id}`);
     }
 
+    // Download receipt image and save to server
+    let receiptFilePath = fileUrl; // Fallback to URL
+    try {
+      receiptFilePath = await this.downloadAndSaveReceipt(
+        bot.botToken,
+        fileUrl,
+        bot.centerId,
+        student.id,
+      );
+      this.logger.log(`Receipt saved to: ${receiptFilePath}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to download receipt: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      // Continue with URL fallback
+    }
+
     // Create Payment record
     const payment = await this.prisma.payment.create({
       data: {
@@ -2262,7 +2326,7 @@ export class TelegramService {
         currency: 'UZS',
         status: 'PENDING',
         paymentMethod: 'BANK_TRANSFER',
-        notes: `Receipt URL: ${fileUrl}\nMonths: ${months}\nCaption: ${message.caption || 'N/A'}`,
+        notes: `Receipt: ${receiptFilePath}\nMonths: ${months}\nCaption: ${message.caption || 'N/A'}`,
         periodStart: new Date(),
       },
     });
@@ -2302,7 +2366,22 @@ export class TelegramService {
       `Payment receipt processed for user ${telegramUser.telegramId}, payment ID: ${payment.id}`,
     );
 
-    // TODO: Notify admins about new payment receipt via WebSocket or telegram
+    // Notify admins about new payment receipt
+    try {
+      await this.notifyAdminsAboutNewReceipt(
+        bot,
+        payment,
+        student,
+        linkedUser,
+        botState.groupId,
+        months,
+        fileId,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to notify admins: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
   }
 
   /**
@@ -2490,6 +2569,892 @@ export class TelegramService {
       this.logger.error(
         `Failed to send discount notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
+    }
+  }
+
+  /**
+   * Notify student about freeze approval
+   */
+  async notifyStudentAboutFreeze(
+    freeze: any,
+    type: 'CREATED' | 'ENDED' | 'CANCELLED',
+  ) {
+    // Check if student has telegram user linked
+    if (!freeze.enrollment?.student?.user?.telegramUserId) {
+      this.logger.warn(
+        `Student ${freeze.studentId} has no linked Telegram user. Cannot send freeze notification.`,
+      );
+      return;
+    }
+
+    const telegramUser = await this.prisma.telegramUser.findUnique({
+      where: { id: freeze.enrollment.student.user.telegramUserId },
+      include: { user: true },
+    });
+
+    if (!telegramUser || !telegramUser.chatId) {
+      this.logger.warn(
+        `TelegramUser ${freeze.enrollment.student.user.telegramUserId} not found or has no chatId.`,
+      );
+      return;
+    }
+
+    const bot = await this.prisma.centerTelegramBot.findFirst({
+      where: { centerId: freeze.enrollment.group.centerId, isActive: true },
+      include: { center: true },
+    });
+
+    if (!bot) {
+      this.logger.error(
+        `No active bot found for center ${freeze.enrollment.group.centerId}`,
+      );
+      return;
+    }
+
+    const formatDate = (date: Date) => {
+      return new Date(date).toLocaleDateString('uz-UZ', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+    };
+
+    let message = '';
+
+    if (type === 'CREATED') {
+      message =
+        `❄️ <b>Darslar muzlatildi</b>\n\n` +
+        `📚 Guruh: <b>${freeze.enrollment.group.name}</b>\n` +
+        `📅 Boshlanish: ${formatDate(freeze.freezeStartDate)}\n`;
+
+      if (freeze.freezeEndDate) {
+        message += `📅 Tugash: ${formatDate(freeze.freezeEndDate)}\n`;
+      } else {
+        message += `📅 Tugash: Noma'lum (admin tomonidan belgilanadi)\n`;
+      }
+
+      message += `\n💡 Muzlatish davomida to'lov talab qilinmaydi.`;
+    } else if (type === 'ENDED') {
+      message =
+        `✅ <b>Muzlatish tugadi</b>\n\n` +
+        `📚 Guruh: <b>${freeze.enrollment.group.name}</b>\n` +
+        `🎓 Darslaringiz davom etadi!\n\n` +
+        `Omad tilaymiz!`;
+    } else if (type === 'CANCELLED') {
+      message =
+        `🚫 <b>Muzlatish bekor qilindi</b>\n\n` +
+        `📚 Guruh: <b>${freeze.enrollment.group.name}</b>\n` +
+        `🎓 Darslaringiz davom etadi!`;
+    }
+
+    try {
+      await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+        parse_mode: 'HTML',
+      });
+
+      this.logger.log(
+        `Sent freeze ${type} notification to student ${freeze.studentId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send freeze notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  /**
+   * Notify student about refund request status
+   */
+  async notifyStudentAboutRefund(
+    refund: any,
+    type: 'CREATED' | 'APPROVED' | 'REJECTED',
+  ) {
+    // Check if student has telegram user linked
+    if (!refund.student?.user?.telegramUserId) {
+      this.logger.warn(
+        `Student ${refund.studentId} has no linked Telegram user. Cannot send refund notification.`,
+      );
+      return;
+    }
+
+    const telegramUser = await this.prisma.telegramUser.findUnique({
+      where: { id: refund.student.user.telegramUserId },
+      include: { user: true },
+    });
+
+    if (!telegramUser || !telegramUser.chatId) {
+      this.logger.warn(
+        `TelegramUser ${refund.student.user.telegramUserId} not found or has no chatId.`,
+      );
+      return;
+    }
+
+    const bot = await this.prisma.centerTelegramBot.findFirst({
+      where: { centerId: refund.centerId, isActive: true },
+      include: { center: true },
+    });
+
+    if (!bot) {
+      this.logger.error(`No active bot found for center ${refund.centerId}`);
+      return;
+    }
+
+    const formatPrice = (price: number) =>
+      price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+    let message = '';
+
+    if (type === 'CREATED') {
+      message =
+        `📝 <b>Qaytarish so'rovi qabul qilindi</b>\n\n` +
+        `💰 Qaytariladigan summa: <b>${formatPrice(Number(refund.refundAmount))} so'm</b>\n` +
+        `📊 Jami to'langan: ${formatPrice(Number(refund.totalPaid))} so'm\n` +
+        `📚 Qatnashgan darslar: ${refund.lessonsAttended} / ${refund.totalLessons}\n\n` +
+        `⏳ So'rovingiz ko'rib chiqilmoqda...`;
+    } else if (type === 'APPROVED') {
+      message =
+        `✅ <b>Qaytarish so'rovi tasdiqlandi</b>\n\n` +
+        `💰 Qaytariladigan summa: <b>${formatPrice(Number(refund.refundAmount))} so'm</b>\n\n` +
+        `Pul yaqin kunlarda hisobingizga qaytariladi.\n` +
+        `Bizning xizmatlarimizdan foydalanganingiz uchun rahmat! 🙏`;
+    } else if (type === 'REJECTED') {
+      message = `❌ <b>Qaytarish so'rovi rad etildi</b>\n\n`;
+
+      if (refund.processingNotes) {
+        message += `📝 Sabab: ${refund.processingNotes}\n\n`;
+      }
+
+      message += `Agar savollaringiz bo'lsa, administrator bilan bog'laning.`;
+    }
+
+    try {
+      await this.sendMessageToUser(bot, telegramUser.chatId, message, {
+        parse_mode: 'HTML',
+      });
+
+      this.logger.log(
+        `Sent refund ${type} notification to student ${refund.studentId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send refund notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  /**
+   * Download and save receipt image to server
+   */
+  private async downloadAndSaveReceipt(
+    botToken: string,
+    fileUrl: string,
+    centerId: number,
+    studentId: number,
+  ): Promise<string> {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    // Download file
+    const fileBuffer = await this.telegramApi.downloadFile(fileUrl);
+
+    // Create directory structure: uploads/receipts/{centerId}/
+    const uploadsDir = path.join(process.cwd(), 'uploads', 'receipts', centerId.toString());
+    await fs.mkdir(uploadsDir, { recursive: true });
+
+    // Generate filename: receipt_{studentId}_{timestamp}.jpg
+    const timestamp = Date.now();
+    const filename = `receipt_${studentId}_${timestamp}.jpg`;
+    const filePath = path.join(uploadsDir, filename);
+
+    // Save file
+    await fs.writeFile(filePath, fileBuffer);
+
+    // Return relative path
+    return `uploads/receipts/${centerId}/${filename}`;
+  }
+
+  /**
+   * Handle payment rejection by admin
+   */
+  private async handleRejectPayment(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    paymentId: string,
+    callbackQuery: TelegramCallbackQuery,
+  ) {
+    this.logger.log(`Admin ${telegramUser.id} rejecting payment ${paymentId}`);
+
+    const paymentIdNum = parseInt(paymentId, 10);
+    if (isNaN(paymentIdNum)) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Xatolik: Noto\'g\'ri payment ID',
+        true,
+      );
+      return;
+    }
+
+    // Get payment
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentIdNum },
+    });
+
+    if (!payment) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ To\'lov topilmadi',
+        true,
+      );
+      return;
+    }
+
+    // Security check
+    if (payment.centerId !== bot.centerId) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Ruxsat yo\'q',
+        true,
+      );
+      return;
+    }
+
+    // Check if already cancelled
+    if (payment.status === 'CANCELLED') {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        'ℹ️ Bu to\'lov allaqachon bekor qilingan',
+        true,
+      );
+      return;
+    }
+
+    // Set admin state to wait for rejection reason
+    await this.prisma.telegramUser.update({
+      where: { id: telegramUser.id },
+      data: { userStep: `waiting_rejection_reason:${paymentId}` },
+    });
+
+    await this.telegramApi.answerCallbackQuery(
+      bot.botToken,
+      callbackQuery.id,
+      'Bekor qilish sababini yozing',
+    );
+
+    await this.sendMessageToUser(
+      bot,
+      callbackQuery.message.chat.id,
+      '📝 Iltimos, to\'lovni bekor qilish sababini yozing:',
+    );
+  }
+
+  /**
+   * Handle rejection reason input from admin
+   */
+  private async handleRejectionReasonInput(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    reason: string,
+    paymentId: string,
+  ) {
+    this.logger.log(
+      `Processing rejection reason for payment ${paymentId} from admin ${telegramUser.id}`,
+    );
+
+    const paymentIdNum = parseInt(paymentId, 10);
+    if (isNaN(paymentIdNum)) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Xatolik yuz berdi.',
+      );
+      return;
+    }
+
+    // Get payment with student info
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentIdNum },
+      include: {
+        student: {
+          include: {
+            user: {
+              include: {
+                telegramUser: true,
+              },
+            },
+          },
+        },
+        group: true,
+      },
+    });
+
+    if (!payment) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ To\'lov topilmadi.',
+      );
+      return;
+    }
+
+    // Security check
+    if (payment.centerId !== bot.centerId) {
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Ruxsat yo\'q.',
+      );
+      return;
+    }
+
+    try {
+      // Update payment status
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'CANCELLED',
+          notes: `${payment.notes}\n\nBekor qilish sababi: ${reason}`,
+        },
+      });
+
+      // Clear admin state
+      await this.prisma.telegramUser.update({
+        where: { id: telegramUser.id },
+        data: { userStep: null },
+      });
+
+      // Send rejection message to student
+      const studentTelegramUser = payment.student.user?.telegramUser;
+      if (studentTelegramUser?.chatId) {
+        const formatPrice = (price: number) =>
+          price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+        let studentMessage = `❌ <b>To'lovingiz bekor qilindi</b>\n\n`;
+        studentMessage += `💰 Summa: ${formatPrice(Number(payment.amount))} so'm\n`;
+        studentMessage += `📚 Guruh: ${payment.group.name}\n\n`;
+        studentMessage += `📝 <b>Sabab:</b> ${reason}\n\n`;
+        studentMessage += `Iltimos, to'lovni qaytadan amalga oshiring yoki admin bilan bog'laning.`;
+
+        await this.sendMessageToUser(
+          bot,
+          studentTelegramUser.chatId,
+          studentMessage,
+          {
+            parse_mode: 'HTML',
+          },
+        );
+      }
+
+      // Confirm to admin
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '✅ To\'lov bekor qilindi va talabaga xabar yuborildi.',
+      );
+
+      this.logger.log(`Payment ${payment.id} rejected by admin ${telegramUser.id}`);
+    } catch (error) {
+      this.logger.error(
+        `Error rejecting payment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      await this.sendMessageToUser(
+        bot,
+        telegramUser.chatId || '',
+        '❌ Xatolik yuz berdi.',
+      );
+    }
+  }
+
+  /**
+   * Handle payment decision change (from approved to cancelled or vice versa)
+   */
+  private async handleChangePaymentDecision(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    paymentId: string,
+    callbackQuery: TelegramCallbackQuery,
+  ) {
+    this.logger.log(
+      `Admin ${telegramUser.id} changing decision for payment ${paymentId}`,
+    );
+
+    const paymentIdNum = parseInt(paymentId, 10);
+    if (isNaN(paymentIdNum)) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Xatolik: Noto\'g\'ri payment ID',
+        true,
+      );
+      return;
+    }
+
+    // Get payment
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentIdNum },
+    });
+
+    if (!payment) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ To\'lov topilmadi',
+        true,
+      );
+      return;
+    }
+
+    // Security check
+    if (payment.centerId !== bot.centerId) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Ruxsat yo\'q',
+        true,
+      );
+      return;
+    }
+
+    // Show options to change decision
+    const buttons = [
+      [
+        {
+          text: '✅ Tasdiqlash',
+          callback_data: `approve_payment:${payment.id}`,
+        },
+        {
+          text: '❌ Bekor qilish',
+          callback_data: `reject_payment:${payment.id}`,
+        },
+      ],
+    ];
+
+    await this.telegramApi.editMessageText(
+      bot.botToken,
+      callbackQuery.message.chat.id,
+      callbackQuery.message.message_id,
+      callbackQuery.message.text || callbackQuery.message.caption || '',
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: buttons,
+        },
+      },
+    );
+
+    await this.telegramApi.answerCallbackQuery(
+      bot.botToken,
+      callbackQuery.id,
+      'Yangi qaror qabul qiling',
+    );
+  }
+
+  /**
+   * Handle payment approval by admin
+   */
+  private async handleApprovePayment(
+    bot: TelegramBotWithCenter,
+    telegramUser: TelegramUserWithUser,
+    paymentId: string,
+    callbackQuery: TelegramCallbackQuery,
+  ) {
+    this.logger.log(`Admin ${telegramUser.id} approving payment ${paymentId}`);
+
+    const paymentIdNum = parseInt(paymentId, 10);
+    if (isNaN(paymentIdNum)) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Xatolik: Noto\'g\'ri payment ID',
+        true,
+      );
+      return;
+    }
+
+    // Get payment with related data
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentIdNum },
+      include: {
+        student: {
+          include: {
+            user: {
+              include: {
+                telegramUser: true,
+              },
+            },
+          },
+        },
+        group: true,
+      },
+    });
+
+    if (!payment) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ To\'lov topilmadi',
+        true,
+      );
+      return;
+    }
+
+    // Security check: admin can only approve payments from their center
+    if (payment.centerId !== bot.centerId) {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Ruxsat yo\'q',
+        true,
+      );
+      return;
+    }
+
+    // Check if already processed
+    if (payment.status === 'PAID') {
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        'ℹ️ Bu to\'lov allaqachon tasdiqlangan',
+        true,
+      );
+      return;
+    }
+
+    try {
+      // Extract months from notes
+      const notesMatch = payment.notes?.match(/Months: (\d+)/);
+      const months = notesMatch ? parseInt(notesMatch[1], 10) : 1;
+
+      // Update payment status
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'PAID',
+          paidAt: new Date(),
+        },
+      });
+
+      // Find or create enrollment
+      let enrollment = await this.prisma.enrollment.findUnique({
+        where: {
+          groupId_studentId: {
+            groupId: payment.groupId,
+            studentId: payment.studentId,
+          },
+        },
+      });
+
+      if (!enrollment) {
+        // Create new enrollment
+        enrollment = await this.prisma.enrollment.create({
+          data: {
+            groupId: payment.groupId,
+            studentId: payment.studentId,
+            status: 'ACTIVE',
+            joinedAt: new Date(),
+            baseLessonPrice: payment.group.monthlyPrice,
+            perLessonPrice: payment.group.monthlyPrice,
+            balance: Number(payment.amount),
+            lastPaymentDate: new Date(),
+          },
+        });
+      } else {
+        // Update existing enrollment
+        const newBalance = Number(enrollment.balance) + Number(payment.amount);
+        await this.prisma.enrollment.update({
+          where: { id: enrollment.id },
+          data: {
+            status: 'ACTIVE',
+            balance: newBalance,
+            lastPaymentDate: new Date(),
+          },
+        });
+      }
+
+      this.logger.log(
+        `Payment ${payment.id} approved, enrollment ${enrollment.id} updated`,
+      );
+
+      // Send success message to student
+      const studentTelegramUser = payment.student.user?.telegramUser;
+      if (studentTelegramUser?.chatId) {
+        const formatPrice = (price: number) =>
+          price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+        // Check if student is already in the group
+        const isMember = await this.checkStudentMembership(
+          bot.botToken,
+          payment.groupId,
+          studentTelegramUser.telegramId,
+        );
+
+        let studentMessage = `✅ <b>To'lovingiz tasdiqlandi!</b>\n\n`;
+        studentMessage += `💰 Summa: ${formatPrice(Number(payment.amount))} so'm\n`;
+        studentMessage += `📚 Guruh: ${payment.group.name}\n`;
+        studentMessage += `📅 Davr: ${months} oy\n\n`;
+
+        if (isMember) {
+          studentMessage += `ℹ️ Siz allaqachon guruhda a'zosiz. Darslaringiz davom etaveradi!\n\n`;
+          studentMessage += `Omad tilaymiz! 🎓`;
+        } else {
+          // Generate invite link
+          if (payment.group.telegramGroupId) {
+            try {
+              const inviteLinkResponse =
+                await this.telegramApi.createChatInviteLink(
+                  bot.botToken,
+                  payment.group.telegramGroupId,
+                  {
+                    member_limit: 1,
+                    name: `${payment.student.user?.firstName || 'Student'} - Payment Approved`,
+                  },
+                );
+
+              const result = inviteLinkResponse.result as
+                | { invite_link?: string }
+                | undefined;
+
+              if (inviteLinkResponse.ok && result?.invite_link) {
+                studentMessage += `Quyidagi havola orqali guruhga qo'shiling:\n`;
+                studentMessage += `👉 ${result.invite_link}\n\n`;
+                studentMessage += `<i>⚠️ Bu havola faqat 1 marta ishlaydi.</i>\n\n`;
+                studentMessage += `Omad tilaymiz! 🎓`;
+              } else {
+                studentMessage += `Guruhga qo'shilish uchun admin bilan bog'laning.`;
+              }
+            } catch (error) {
+              this.logger.error(
+                `Failed to create invite link: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              );
+              studentMessage += `Guruhga qo'shilish uchun admin bilan bog'laning.`;
+            }
+          } else {
+            studentMessage += `Guruhga qo'shilish uchun admin bilan bog'laning.`;
+          }
+        }
+
+        await this.sendMessageToUser(bot, studentTelegramUser.chatId, studentMessage, {
+          parse_mode: 'HTML',
+        });
+      }
+
+      // Update admin message
+      const updatedMessage = callbackQuery.message.text || callbackQuery.message.caption || '';
+      const newMessage = `${updatedMessage}\n\n✅ <b>Tasdiqlandi</b> (${telegramUser.user?.firstName || 'Admin'})`;
+
+      await this.telegramApi.editMessageText(
+        bot.botToken,
+        callbackQuery.message.chat.id,
+        callbackQuery.message.message_id,
+        newMessage,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: '🔄 O\'zgartirish',
+                  callback_data: `change_payment_decision:${payment.id}`,
+                },
+              ],
+            ],
+          },
+        },
+      );
+
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '✅ To\'lov tasdiqlandi',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error approving payment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        '❌ Xatolik yuz berdi',
+        true,
+      );
+    }
+  }
+
+  /**
+   * Check if student is member of telegram group
+   */
+  private async checkStudentMembership(
+    botToken: string,
+    groupId: number,
+    studentTelegramId: string,
+  ): Promise<boolean> {
+    try {
+      // Get group's telegram group ID
+      const group = await this.prisma.group.findUnique({
+        where: { id: groupId, isDeleted: false },
+      });
+
+      if (!group || !group.telegramGroupId) {
+        this.logger.warn(
+          `Group ${groupId} not found or has no telegram group connected`,
+        );
+        return false;
+      }
+
+      // Check membership via Telegram API
+      const chatMember = await this.telegramApi.getChatMember(
+        botToken,
+        group.telegramGroupId,
+        parseInt(studentTelegramId, 10),
+      );
+
+      if (!chatMember.ok || !chatMember.result) {
+        return false;
+      }
+
+      const status = chatMember.result.status;
+      // Member statuses: creator, administrator, member, restricted, left, kicked
+      return ['creator', 'administrator', 'member', 'restricted'].includes(
+        status,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error checking membership: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Notify admins about new payment receipt
+   */
+  private async notifyAdminsAboutNewReceipt(
+    bot: TelegramBotWithCenter,
+    payment: any,
+    student: any,
+    user: any,
+    groupId: number,
+    months: number,
+    photoFileId: string,
+  ) {
+    this.logger.log(
+      `Notifying admins about new receipt for payment ${payment.id}`,
+    );
+
+    // Get group info with enrollment (to check custom price)
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId, isDeleted: false },
+    });
+
+    if (!group) {
+      this.logger.error(`Group ${groupId} not found`);
+      return;
+    }
+
+    // Check if student has custom price for this group
+    const enrollment = await this.prisma.enrollment.findUnique({
+      where: {
+        groupId_studentId: {
+          groupId: group.id,
+          studentId: student.id,
+        },
+      },
+    });
+
+    // Find all admins for this center with telegram accounts
+    const admins = await this.prisma.user.findMany({
+      where: {
+        centerId: bot.centerId,
+        userType: 'ADMIN',
+        isDeleted: false,
+        telegramUserId: { not: null },
+      },
+      include: {
+        telegramUser: true,
+      },
+    });
+
+    if (admins.length === 0) {
+      this.logger.warn(
+        `No admins with Telegram accounts found for center ${bot.centerId}`,
+      );
+      return;
+    }
+
+    // Format price helper
+    const formatPrice = (price: number) => {
+      return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    };
+
+    // Build message
+    let message = `🆕 <b>Yangi to'lov cheki</b>\n\n`;
+    message += `👤 <b>Talaba:</b> ${user.firstName || ''} ${user.lastName || ''}\n`;
+    message += `📱 <b>Telefon:</b> ${user.phoneNumber}\n`;
+    message += `📚 <b>Guruh:</b> ${group.name}\n`;
+    message += `📅 <b>Davr:</b> ${months} oy\n`;
+    message += `💰 <b>To'lov summasi:</b> ${formatPrice(Number(payment.amount))} so'm\n\n`;
+
+    // Show group price and custom price if exists
+    message += `💵 <b>Guruh narxi:</b> ${formatPrice(Number(group.monthlyPrice))} so'm/oy\n`;
+
+    if (enrollment?.customMonthlyPrice) {
+      const customPrice = Number(enrollment.customMonthlyPrice);
+      const groupPrice = Number(group.monthlyPrice);
+      const difference = groupPrice - customPrice;
+
+      message += `💎 <b>Talaba uchun maxsus narx:</b> ${formatPrice(customPrice)} so'm/oy\n`;
+      if (difference > 0) {
+        message += `📉 <b>Chegirma:</b> ${formatPrice(difference)} so'm/oy\n`;
+      } else if (difference < 0) {
+        message += `📈 <b>Qo'shimcha:</b> ${formatPrice(Math.abs(difference))} so'm/oy\n`;
+      }
+    }
+
+    // Build inline keyboard
+    const buttons = [
+      [
+        {
+          text: '✅ Tasdiqlash',
+          callback_data: `approve_payment:${payment.id}`,
+        },
+        {
+          text: '❌ Bekor qilish',
+          callback_data: `reject_payment:${payment.id}`,
+        },
+      ],
+    ];
+
+    // Send message with photo to each admin
+    for (const admin of admins) {
+      if (!admin.telegramUser?.chatId) {
+        continue;
+      }
+
+      try {
+        await this.telegramApi.sendPhoto(
+          bot.botToken,
+          admin.telegramUser.chatId,
+          photoFileId,
+          message,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: buttons,
+            },
+          },
+        );
+
+        this.logger.log(
+          `Sent receipt notification to admin ${admin.id} (${admin.firstName})`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Failed to send notification to admin ${admin.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
     }
   }
 }

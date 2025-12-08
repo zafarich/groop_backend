@@ -19,6 +19,8 @@ import { TeachersModule } from './modules/teachers/teachers.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { EventsModule } from './modules/events/events.module';
 import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
+import { FreezeModule } from './modules/freeze/freeze.module';
+import { RefundModule } from './modules/refund/refund.module';
 
 @Module({
   imports: [
@@ -41,6 +43,8 @@ import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
     GroupsModule,
     EventsModule,
     EnrollmentsModule,
+    FreezeModule,
+    RefundModule,
   ],
   controllers: [AppController],
   providers: [

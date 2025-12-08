@@ -381,6 +381,23 @@ export class TelegramApiService {
   }
 
   /**
+   * Download file from Telegram
+   */
+  async downloadFile(url: string): Promise<Buffer> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.statusText}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      this.logger.error(`Error downloading file: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Build inline keyboard
    */
   buildInlineKeyboard(
