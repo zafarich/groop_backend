@@ -548,16 +548,25 @@ export class TelegramService {
       return;
     }
 
-    // Answer callback query immediately
-    await this.telegramApi.answerCallbackQuery(
-      bot.botToken,
-      callbackQuery.id,
-      "Ma'lumot qabul qilindi",
-    );
-
     // Parse callback data
     // Format: action:param1:param2
     const [action, ...params] = data.split(':');
+
+    // For payment-related actions, don't answer callback query here
+    // Let the handler do it with appropriate message
+    const paymentActions = [
+      'approve_payment',
+      'reject_payment',
+      'change_payment_decision',
+    ];
+    if (!paymentActions.includes(action)) {
+      // Answer callback query immediately for non-payment actions
+      await this.telegramApi.answerCallbackQuery(
+        bot.botToken,
+        callbackQuery.id,
+        "Ma'lumot qabul qilindi",
+      );
+    }
 
     switch (action) {
       case 'pay':
@@ -2758,7 +2767,12 @@ export class TelegramService {
     const fileBuffer = await this.telegramApi.downloadFile(fileUrl);
 
     // Create directory structure: uploads/receipts/{centerId}/
-    const uploadsDir = path.join(process.cwd(), 'uploads', 'receipts', centerId.toString());
+    const uploadsDir = path.join(
+      process.cwd(),
+      'uploads',
+      'receipts',
+      centerId.toString(),
+    );
     await fs.mkdir(uploadsDir, { recursive: true });
 
     // Generate filename: receipt_{studentId}_{timestamp}.jpg
@@ -2789,7 +2803,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ Xatolik: Noto\'g\'ri payment ID',
+        "❌ Xatolik: Noto'g'ri payment ID",
         true,
       );
       return;
@@ -2804,7 +2818,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ To\'lov topilmadi',
+        "❌ To'lov topilmadi",
         true,
       );
       return;
@@ -2815,7 +2829,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ Ruxsat yo\'q',
+        "❌ Ruxsat yo'q",
         true,
       );
       return;
@@ -2826,7 +2840,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        'ℹ️ Bu to\'lov allaqachon bekor qilingan',
+        "ℹ️ Bu to'lov allaqachon bekor qilingan",
         true,
       );
       return;
@@ -2847,7 +2861,7 @@ export class TelegramService {
     await this.sendMessageToUser(
       bot,
       callbackQuery.message.chat.id,
-      '📝 Iltimos, to\'lovni bekor qilish sababini yozing:',
+      "📝 Iltimos, to'lovni bekor qilish sababini yozing:",
     );
   }
 
@@ -2895,7 +2909,7 @@ export class TelegramService {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        '❌ To\'lov topilmadi.',
+        "❌ To'lov topilmadi.",
       );
       return;
     }
@@ -2905,7 +2919,7 @@ export class TelegramService {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        '❌ Ruxsat yo\'q.',
+        "❌ Ruxsat yo'q.",
       );
       return;
     }
@@ -2952,10 +2966,12 @@ export class TelegramService {
       await this.sendMessageToUser(
         bot,
         telegramUser.chatId || '',
-        '✅ To\'lov bekor qilindi va talabaga xabar yuborildi.',
+        "✅ To'lov bekor qilindi va talabaga xabar yuborildi.",
       );
 
-      this.logger.log(`Payment ${payment.id} rejected by admin ${telegramUser.id}`);
+      this.logger.log(
+        `Payment ${payment.id} rejected by admin ${telegramUser.id}`,
+      );
     } catch (error) {
       this.logger.error(
         `Error rejecting payment: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -2986,7 +3002,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ Xatolik: Noto\'g\'ri payment ID',
+        "❌ Xatolik: Noto'g'ri payment ID",
         true,
       );
       return;
@@ -3001,7 +3017,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ To\'lov topilmadi',
+        "❌ To'lov topilmadi",
         true,
       );
       return;
@@ -3012,11 +3028,18 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ Ruxsat yo\'q',
+        "❌ Ruxsat yo'q",
         true,
       );
       return;
     }
+
+    // Remove the status line from original message
+    let originalMessage =
+      callbackQuery.message.caption || callbackQuery.message.text || '';
+
+    // Remove previous status (✅ Tasdiqlandi or ❌ Bekor qilindi)
+    originalMessage = originalMessage.replace(/\n\n[✅❌].*$/s, '');
 
     // Show options to change decision
     const buttons = [
@@ -3032,11 +3055,11 @@ export class TelegramService {
       ],
     ];
 
-    await this.telegramApi.editMessageText(
+    await this.telegramApi.editMessageCaption(
       bot.botToken,
       callbackQuery.message.chat.id,
       callbackQuery.message.message_id,
-      callbackQuery.message.text || callbackQuery.message.caption || '',
+      originalMessage,
       {
         parse_mode: 'HTML',
         reply_markup: {
@@ -3068,7 +3091,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ Xatolik: Noto\'g\'ri payment ID',
+        "❌ Xatolik: Noto'g'ri payment ID",
         true,
       );
       return;
@@ -3095,7 +3118,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ To\'lov topilmadi',
+        "❌ To'lov topilmadi",
         true,
       );
       return;
@@ -3106,7 +3129,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '❌ Ruxsat yo\'q',
+        "❌ Ruxsat yo'q",
         true,
       );
       return;
@@ -3117,7 +3140,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        'ℹ️ Bu to\'lov allaqachon tasdiqlangan',
+        "ℹ️ Bu to'lov allaqachon tasdiqlangan",
         true,
       );
       return;
@@ -3236,16 +3259,22 @@ export class TelegramService {
           }
         }
 
-        await this.sendMessageToUser(bot, studentTelegramUser.chatId, studentMessage, {
-          parse_mode: 'HTML',
-        });
+        await this.sendMessageToUser(
+          bot,
+          studentTelegramUser.chatId,
+          studentMessage,
+          {
+            parse_mode: 'HTML',
+          },
+        );
       }
 
-      // Update admin message
-      const updatedMessage = callbackQuery.message.text || callbackQuery.message.caption || '';
+      // Update admin message (photo message with caption)
+      const updatedMessage =
+        callbackQuery.message.caption || callbackQuery.message.text || '';
       const newMessage = `${updatedMessage}\n\n✅ <b>Tasdiqlandi</b> (${telegramUser.user?.firstName || 'Admin'})`;
 
-      await this.telegramApi.editMessageText(
+      await this.telegramApi.editMessageCaption(
         bot.botToken,
         callbackQuery.message.chat.id,
         callbackQuery.message.message_id,
@@ -3256,7 +3285,7 @@ export class TelegramService {
             inline_keyboard: [
               [
                 {
-                  text: '🔄 O\'zgartirish',
+                  text: "🔄 O'zgartirish",
                   callback_data: `change_payment_decision:${payment.id}`,
                 },
               ],
@@ -3268,7 +3297,7 @@ export class TelegramService {
       await this.telegramApi.answerCallbackQuery(
         bot.botToken,
         callbackQuery.id,
-        '✅ To\'lov tasdiqlandi',
+        "✅ To'lov muvaffaqiyatli tasdiqlandi!",
       );
     } catch (error) {
       this.logger.error(

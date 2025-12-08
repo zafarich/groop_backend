@@ -230,6 +230,37 @@ export class TelegramApiService {
   }
 
   /**
+   * Edit message caption (for photo messages)
+   */
+  async editMessageCaption(
+    botToken: string,
+    chatId: string | number,
+    messageId: number,
+    caption: string,
+    options?: SendMessageOptions,
+  ): Promise<TelegramResponse> {
+    const url = `https://api.telegram.org/bot${botToken}/editMessageCaption`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          caption,
+          ...options,
+        }),
+      });
+
+      return await response.json();
+    } catch (error) {
+      this.logger.error(`Error editing message caption: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Answer callback query
    */
   async answerCallbackQuery(
