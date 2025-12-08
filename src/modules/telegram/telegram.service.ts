@@ -3430,6 +3430,18 @@ export class TelegramService {
     // Send message with photo to each admin
     for (const admin of admins) {
       if (!admin.telegramUser?.chatId) {
+        this.logger.warn(
+          `Admin ${admin.id} (${admin.firstName}) has no chatId. They need to start the bot first with /start command.`,
+        );
+        continue;
+      }
+
+      // Ensure chatId is a valid number (private chat, not group)
+      const chatIdNum = Number(admin.telegramUser.chatId);
+      if (chatIdNum < 0) {
+        this.logger.warn(
+          `Admin ${admin.id} chatId is negative (${admin.telegramUser.chatId}), which indicates a group chat. Skipping.`,
+        );
         continue;
       }
 
@@ -3448,7 +3460,7 @@ export class TelegramService {
         );
 
         this.logger.log(
-          `Sent receipt notification to admin ${admin.id} (${admin.firstName})`,
+          `Sent receipt notification to admin ${admin.id} (${admin.firstName}) at chatId ${admin.telegramUser.chatId}`,
         );
       } catch (error) {
         this.logger.error(
