@@ -448,6 +448,21 @@ export class TelegramService {
       return;
     }
 
+    // Only process bot features in private chat
+    // Group chat is only for /connect command (handled in processTextMessage)
+    if (!isPrivateChat) {
+      // For group chat: Only handle /connect command
+      if (message.text && message.text.startsWith('/connect')) {
+        await this.processTextMessage(bot, telegramUser, message.text);
+      } else {
+        this.logger.debug(
+          `Ignoring non-connect message from group chat for user ${telegramId}`,
+        );
+      }
+      return;
+    }
+
+    // Private chat only - handle all bot features
     // Handle contact sharing (fallback for any case)
     if (message.contact) {
       await this.handleContactMessage(bot, telegramUser, message.contact);
@@ -2886,8 +2901,8 @@ export class TelegramService {
     telegramUser: TelegramUserWithUser,
     reason: string,
     paymentId: string,
-    originalMessageId?: number,
-    originalChatId?: number,
+    _originalMessageId?: number,
+    _originalChatId?: number,
   ) {
     this.logger.log(
       `Processing rejection reason for payment ${paymentId} from admin ${telegramUser.id}, reason: "${reason}"`,
