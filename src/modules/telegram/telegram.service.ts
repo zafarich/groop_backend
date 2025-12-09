@@ -380,6 +380,24 @@ export class TelegramService {
         })) as TelegramUserWithUser;
       }
 
+      // Auto-restore corrupted chatId: If user has group chatId but is messaging from private chat
+      // This fixes chatIds that were overwritten when admin used /connect in group chat
+      if (isPrivateChat && Number(telegramUser.chatId) < 0) {
+        this.logger.warn(
+          `User ${telegramUser.id} has group chatId ${telegramUser.chatId}, restoring to private chatId ${chatId}`,
+        );
+
+        telegramUser = (await this.prisma.telegramUser.update({
+          where: { id: telegramUser.id },
+          data: { chatId }, // Restore to private chat ID
+          include: { user: true },
+        })) as TelegramUserWithUser;
+
+        this.logger.log(
+          `Restored chatId for user ${telegramUser.id} to ${chatId}`,
+        );
+      }
+
       // For private chat: Check if registration flow needs to continue
       if (isPrivateChat) {
         // Check if user is in registration flow (has userStep set)
