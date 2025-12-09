@@ -361,11 +361,30 @@ export class TelegramService {
         await this.promptShareContact(bot, telegramUser);
         return;
       } else {
-        // For group chat: Do nothing - group messages don't trigger user creation
-        this.logger.log(
-          `Ignoring message from group chat for new user ${telegramId}`,
-        );
-        return;
+        // For group chat: Create minimal TelegramUser record for /connect command
+        // Don't save chatId here to avoid overwriting private chatId
+        if (message.text && message.text.startsWith('/connect')) {
+          telegramUser = await this.prisma.telegramUser.create({
+            data: {
+              telegramId,
+              centerId: bot.centerId,
+              // chatId is intentionally NOT set here - will be set when user messages in private chat
+              isBot: message.from.is_bot || false,
+              status: 'active',
+            },
+            include: { user: true },
+          });
+
+          this.logger.log(
+            `Created minimal TelegramUser ${telegramUser.id} for /connect in group chat`,
+          );
+        } else {
+          // For other group messages: ignore
+          this.logger.log(
+            `Ignoring non-connect message from group chat for new user ${telegramId}`,
+          );
+          return;
+        }
       }
     } else {
       // CASE 2: Telegram user already exists
@@ -472,7 +491,9 @@ export class TelegramService {
     if (!isPrivateChat) {
       // For group chat: Only handle /connect command
       if (message.text && message.text.startsWith('/connect')) {
-        await this.processTextMessage(bot, telegramUser, message.text);
+        // Pass the actual message chatId for group validation
+        const [, token] = message.text.split(' ');
+        await this.handleConnectCommand(bot, telegramUser, token, chatId);
       } else {
         this.logger.debug(
           `Ignoring non-connect message from group chat for user ${telegramId}`,
@@ -1510,22 +1531,22 @@ export class TelegramService {
     bot: TelegramBotWithCenter,
     telegramUser: TelegramUserWithUser,
     token?: string,
+    messageChatId?: string, // Actual chat ID from message
   ) {
     this.logger.log(
       `/connect command from ${telegramUser.telegramId} with token: ${token}`,
     );
 
-    // Get chat ID and type from telegramUser
-    const chatId = Number(telegramUser.chatId);
-    const chatType = telegramUser.chatId ? 'group' : 'private'; // This is approximate
+    // Use messageChatId if provided (from group chat), otherwise use telegramUser.chatId (from private chat)
+    const chatId = messageChatId || telegramUser.chatId || '';
+    const chatIdNum = Number(chatId);
 
     // 1. Validate this is a group chat (not private)
-    // In real implementation, you'd get this from the message object, but we can check using chat ID
     // Telegram group IDs are negative numbers
-    if (chatId >= 0) {
+    if (chatIdNum >= 0) {
       await this.sendMessageToUser(
         bot,
-        telegramUser.chatId || '',
+        chatId,
         "❌ Bu buyruq faqat guruh chatida ishlatiladi! Iltimos, botni guruhga qo'shing va u yerda /connect buyrug'ini ishga tushiring.",
       );
       return;
@@ -1535,7 +1556,7 @@ export class TelegramService {
     if (!token || token.trim() === '') {
       await this.sendMessageToUser(
         bot,
-        telegramUser.chatId || '',
+        chatId,
         '❌ Token kiritilmagan!\n\nFoydalanish: `/connect <connect_token>`\n\nAdmin paneldan connect token ni oling.',
       );
       return;
@@ -1552,7 +1573,7 @@ export class TelegramService {
       // 4. Send success message (join link will be sent to students after payment approval)
       await this.sendMessageToUser(
         bot,
-        telegramUser.chatId || '',
+        chatId,
         `✅ Muvaffaqiyatli ulandi!\n\n` +
           `📚 Guruh: ${result.name}\n\n` +
           `Telegram guruh tizim guruhiga muvaffaqiyatli bog'landi.`,
@@ -1570,11 +1591,7 @@ export class TelegramService {
       const errorMessage =
         error instanceof Error ? error.message : "Noma'lum xatolik yuz berdi.";
 
-      await this.sendMessageToUser(
-        bot,
-        telegramUser.chatId || '',
-        `❌ Xatolik: ${errorMessage}`,
-      );
+      await this.sendMessageToUser(bot, chatId, `❌ Xatolik: ${errorMessage}`);
     }
   }
 
