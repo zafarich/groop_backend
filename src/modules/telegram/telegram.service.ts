@@ -429,7 +429,12 @@ export class TelegramService {
           }
 
           // Handle text input for registration steps
-          if (message.text && !message.text.startsWith('/')) {
+          // Skip if waiting for rejection reason (handled in handleRegularMessage)
+          if (
+            message.text &&
+            !message.text.startsWith('/') &&
+            !telegramUser.userStep.startsWith('waiting_rejection_reason:')
+          ) {
             await this.handleRegistrationStepInput(
               bot,
               telegramUser,
