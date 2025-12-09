@@ -2955,16 +2955,14 @@ export class TelegramService {
         where: { id: telegramUser.id },
         data: { userStep: null },
       });
-
+      const formatPrice = (price: number) =>
+        price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
       // Send rejection message to student
       const studentTelegramUser = payment.student.user?.telegramUser;
       if (studentTelegramUser?.chatId) {
         this.logger.log(
           `Sending rejection message to student ${payment.student.id} at chatId ${studentTelegramUser.chatId}`,
         );
-
-        const formatPrice = (price: number) =>
-          price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 
         let studentMessage = `❌ <b>To'lovingiz bekor qilindi</b>\n\n`;
         studentMessage += `💰 Summa: ${formatPrice(Number(payment.amount))} so'm\n`;
