@@ -370,8 +370,9 @@ export class TelegramService {
     } else {
       // CASE 2: Telegram user already exists
 
-      // Update chatId if changed
-      if (telegramUser.chatId !== chatId) {
+      // Update chatId ONLY if this is a private chat and chatId has changed
+      // This prevents overwriting private chatId with group chatId (negative numbers)
+      if (isPrivateChat && telegramUser.chatId !== chatId) {
         telegramUser = (await this.prisma.telegramUser.update({
           where: { id: telegramUser.id },
           data: { chatId },
@@ -3509,15 +3510,6 @@ export class TelegramService {
       if (!admin.telegramUser?.chatId) {
         this.logger.warn(
           `Admin ${admin.id} (${admin.firstName}) has no chatId. They need to start the bot first with /start command.`,
-        );
-        continue;
-      }
-
-      // Ensure chatId is a valid number (private chat, not group)
-      const chatIdNum = Number(admin.telegramUser.chatId);
-      if (chatIdNum < 0) {
-        this.logger.warn(
-          `Admin ${admin.id} chatId is negative (${admin.telegramUser.chatId}), which indicates a group chat. Skipping.`,
         );
         continue;
       }
