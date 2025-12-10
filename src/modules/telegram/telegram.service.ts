@@ -2948,6 +2948,9 @@ export class TelegramService {
     this.logger.log(
       `Processing rejection reason for payment ${paymentId} from admin ${telegramUser.id}, reason: "${reason}"`,
     );
+    this.logger.log(
+      `Original message params - messageId: ${_originalMessageId}, chatId: ${_originalChatId}`,
+    );
 
     const paymentIdNum = parseInt(paymentId, 10);
     if (isNaN(paymentIdNum)) {
