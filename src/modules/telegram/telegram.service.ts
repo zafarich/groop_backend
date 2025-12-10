@@ -3042,6 +3042,42 @@ export class TelegramService {
         );
       }
 
+      // Update the original payment message to show rejection status
+      if (_originalMessageId && _originalChatId) {
+        try {
+          // Build updated message with rejection status
+          let updatedMessage = `❌ <b>To'lov bekor qilindi</b>\n\n`;
+          updatedMessage += `👤 <b>Talaba:</b> ${payment.student.user?.firstName || ''} ${payment.student.user?.lastName || ''}\n`;
+          updatedMessage += `📱 <b>Telefon:</b> ${payment.student.user?.phoneNumber}\n`;
+          updatedMessage += `📚 <b>Guruh:</b> ${payment.group.name}\n`;
+          updatedMessage += `💰 <b>To'lov summasi:</b> ${formatPrice(Number(payment.amount))} so'm\n\n`;
+          updatedMessage += `📝 <b>Bekor qilish sababi:</b> ${reason}\n`;
+          updatedMessage += `👤 <b>Bekor qilgan:</b> ${telegramUser.user?.firstName || 'Admin'}`;
+
+          // Use direct HTTP request to edit message text
+          const url = `https://api.telegram.org/bot${bot.botToken}/editMessageText`;
+          await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: _originalChatId,
+              message_id: _originalMessageId,
+              text: updatedMessage,
+              parse_mode: 'HTML',
+              // Remove buttons by not including reply_markup
+            }),
+          });
+
+          this.logger.log(
+            `Updated original message ${_originalMessageId} with rejection status`,
+          );
+        } catch (error) {
+          this.logger.error(
+            `Failed to update original message: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          );
+        }
+      }
+
       // Confirm to admin and send detailed message
       let confirmMessage = "✅ <b>To'lov bekor qilindi</b>\n\n";
       confirmMessage += `💰 Summa: ${formatPrice(Number(payment.amount))} so'm\n`;
