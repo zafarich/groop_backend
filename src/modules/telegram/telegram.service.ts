@@ -3057,15 +3057,15 @@ export class TelegramService {
           updatedMessage += `📝 <b>Bekor qilish sababi:</b> ${reason}\n`;
           updatedMessage += `👤 <b>Bekor qilgan:</b> ${telegramUser.user?.firstName || 'Admin'}`;
 
-          // Use direct HTTP request to edit message text
-          const url = `https://api.telegram.org/bot${bot.botToken}/editMessageText`;
+          // Use direct HTTP request to edit message caption (payment messages are photos)
+          const url = `https://api.telegram.org/bot${bot.botToken}/editMessageCaption`;
           const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: _originalChatId,
               message_id: _originalMessageId,
-              text: updatedMessage,
+              caption: updatedMessage,
               parse_mode: 'HTML',
               // Remove buttons by not including reply_markup
             }),
