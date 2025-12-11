@@ -72,6 +72,7 @@ export class CenterOwnershipGuard implements CanActivate {
         'payment-card': this.prisma.centerPaymentCard,
         subscription: this.prisma.centerSubscription,
         'center-bot': this.prisma.centerTelegramBot,
+        enrollment: this.prisma.enrollment,
         // Add more resources as needed
       };
 
