@@ -3059,7 +3059,7 @@ export class TelegramService {
 
           // Use direct HTTP request to edit message text
           const url = `https://api.telegram.org/bot${bot.botToken}/editMessageText`;
-          await fetch(url, {
+          const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3071,9 +3071,18 @@ export class TelegramService {
             }),
           });
 
-          this.logger.log(
-            `Updated original message ${_originalMessageId} with rejection status`,
-          );
+          const result = await response.json();
+
+          if (!result.ok) {
+            this.logger.error(
+              `Failed to update message: ${result.description || 'Unknown error'}`,
+            );
+            this.logger.error(`Full response: ${JSON.stringify(result)}`);
+          } else {
+            this.logger.log(
+              `Updated original message ${_originalMessageId} with rejection status`,
+            );
+          }
         } catch (error) {
           this.logger.error(
             `Failed to update original message: ${error instanceof Error ? error.message : 'Unknown error'}`,
