@@ -61,7 +61,50 @@ export class CenterOwnershipGuard implements CanActivate {
     centerId: number,
   ): Promise<boolean> {
     try {
-      // Map resource names to Prisma models
+      // Special handling for resources without direct centerId
+      if (resourceName.toLowerCase() === 'enrollment') {
+        const enrollment = await this.prisma.enrollment.findUnique({
+          where: { id: resourceId },
+          select: {
+            isDeleted: true,
+            group: {
+              select: { centerId: true },
+            },
+          },
+        });
+
+        if (!enrollment) {
+          throw new NotFoundException('Enrollment not found');
+        }
+
+        if (enrollment.isDeleted) {
+          throw new NotFoundException('Enrollment not found');
+        }
+
+        return enrollment.group.centerId === centerId;
+      }
+
+      if (resourceName.toLowerCase() === 'payment') {
+        const payment = await this.prisma.payment.findUnique({
+          where: { id: resourceId },
+          select: {
+            isDeleted: true,
+            centerId: true,
+          },
+        });
+
+        if (!payment) {
+          throw new NotFoundException('Payment not found');
+        }
+
+        if (payment.isDeleted) {
+          throw new NotFoundException('Payment not found');
+        }
+
+        return payment.centerId === centerId;
+      }
+
+      // Map resource names to Prisma models (for resources with direct centerId)
       const modelMap: Record<string, any> = {
         teacher: this.prisma.teacher,
         student: this.prisma.student,
@@ -72,8 +115,6 @@ export class CenterOwnershipGuard implements CanActivate {
         'payment-card': this.prisma.centerPaymentCard,
         subscription: this.prisma.centerSubscription,
         'center-bot': this.prisma.centerTelegramBot,
-        enrollment: this.prisma.enrollment,
-        payment: this.prisma.payment,
         // Add more resources as needed
       };
 
