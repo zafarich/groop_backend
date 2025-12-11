@@ -849,18 +849,33 @@ export class TelegramService {
       return;
     }
 
-    // Get student record
-    const student = await this.prisma.student.findFirst({
-      where: { userId: telegramUser.user.id, isDeleted: false },
+    // Get student record for THIS center
+    let student = await this.prisma.student.findFirst({
+      where: {
+        userId: telegramUser.user.id,
+        centerId: bot.centerId, // ✅ Validate center ownership
+        isDeleted: false,
+      },
     });
 
+    // Auto-create student record if user doesn't have one for this center
     if (!student) {
-      await this.sendMessageToUser(
-        bot,
-        chatId,
-        "❌ Talaba ma'lumotlari topilmadi.",
+      this.logger.log(
+        `Student record not found for user ${telegramUser.user.id} in center ${bot.centerId}, creating new record`,
       );
-      return;
+
+      student = await this.prisma.student.create({
+        data: {
+          userId: telegramUser.user.id,
+          centerId: bot.centerId,
+          firstName: telegramUser.user.firstName,
+          lastName: telegramUser.user.lastName,
+        },
+      });
+
+      this.logger.log(
+        `Auto-created Student ${student.id} for center ${bot.centerId}`,
+      );
     }
 
     // Check if already enrolled

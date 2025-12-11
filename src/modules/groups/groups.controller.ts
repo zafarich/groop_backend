@@ -4,6 +4,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Param,
   Query,
   Delete,
@@ -78,5 +79,35 @@ export class GroupsController {
   @CheckCenterOwnership({ resourceName: 'group' })
   getConnectionStatus(@Param('id', ParseIntPipe) id: number) {
     return this.groupsService.getConnectionStatus(id);
+  }
+
+  @Put(':id/teachers')
+  @RequirePermissions('group.update')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  updateTeachers(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: import('./dto').UpdateGroupTeachersDto,
+  ) {
+    return this.groupsService.updateTeachers(id, dto);
+  }
+
+  @Put(':id/schedules')
+  @RequirePermissions('group.update')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  updateSchedules(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: import('./dto').UpdateGroupSchedulesDto,
+  ) {
+    return this.groupsService.updateSchedules(id, dto);
+  }
+
+  @Put(':id/discounts')
+  @RequirePermissions('group.update')
+  @CheckCenterOwnership({ resourceName: 'group' })
+  updateDiscounts(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: import('./dto').UpdateGroupDiscountsDto,
+  ) {
+    return this.groupsService.updateDiscounts(id, dto);
   }
 }

@@ -622,4 +622,229 @@ export class GroupsService {
       message: 'Connection status retrieved successfully',
     };
   }
+
+  /**
+   * Update group teachers (replace all)
+   */
+  async updateTeachers(
+    id: number,
+    dto: import('./dto').UpdateGroupTeachersDto,
+  ) {
+    // 1. Validate group exists and get centerId
+    const group = await this.findOneRaw(id);
+
+    // 2. Validate teachers exist and belong to the same center
+    const teacherIds = dto.teachers.map((t) => t.teacherId);
+    const teachers = await this.prisma.teacher.findMany({
+      where: {
+        id: { in: teacherIds },
+        centerId: group.centerId,
+        isDeleted: false,
+      },
+    });
+
+    if (teachers.length !== teacherIds.length) {
+      const foundIds = teachers.map((t) => t.id);
+      const missingIds = teacherIds.filter((id) => !foundIds.includes(id));
+      throw new BadRequestException(
+        `Teachers not found or don't belong to this center: ${missingIds.join(', ')}`,
+      );
+    }
+
+    // 3. Validate only one primary teacher
+    const primaryTeachers = dto.teachers.filter((t) => t.isPrimary);
+    if (primaryTeachers.length > 1) {
+      throw new BadRequestException(
+        'Only one teacher can be marked as primary.',
+      );
+    }
+
+    // 4. Validate no duplicate teachers
+    const uniqueTeacherIds = new Set(teacherIds);
+    if (uniqueTeacherIds.size !== teacherIds.length) {
+      throw new BadRequestException(
+        'Duplicate teachers are not allowed. Each teacher can only be assigned once.',
+      );
+    }
+
+    // 5. Replace all teachers in transaction
+    const updatedGroup = await this.prisma.$transaction(async (tx) => {
+      // Delete existing teachers
+      await tx.groupTeacher.deleteMany({
+        where: { groupId: id },
+      });
+
+      // Create new teachers
+      await tx.groupTeacher.createMany({
+        data: dto.teachers.map((t) => ({
+          groupId: id,
+          teacherId: t.teacherId,
+          isPrimary: t.isPrimary || false,
+        })),
+      });
+
+      // Return updated group with teachers
+      return tx.group.findUnique({
+        where: { id },
+        include: {
+          groupTeachers: {
+            include: {
+              teacher: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  specialty: true,
+                  user: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    this.logger.log(
+      `Updated teachers for group ${id}: ${dto.teachers.length} teacher(s)`,
+    );
+
+    return {
+      success: true,
+      code: 0,
+      data: updatedGroup,
+      message: 'Teachers updated successfully',
+    };
+  }
+
+  /**
+   * Update group lesson schedules (replace all)
+   */
+  async updateSchedules(
+    id: number,
+    dto: import('./dto').UpdateGroupSchedulesDto,
+  ) {
+    // 1. Validate group exists
+    await this.findOneRaw(id);
+
+    // 2. Validate no duplicate days
+    const days = dto.schedules.map((s) => s.dayOfWeek);
+    const uniqueDays = new Set(days);
+    if (uniqueDays.size !== days.length) {
+      throw new BadRequestException(
+        'Duplicate lesson days are not allowed. Each day can only appear once.',
+      );
+    }
+
+    // 3. Replace all schedules in transaction
+    const updatedGroup = await this.prisma.$transaction(async (tx) => {
+      // Delete existing schedules
+      await tx.lessonSchedule.deleteMany({
+        where: { groupId: id },
+      });
+
+      // Create new schedules
+      await tx.lessonSchedule.createMany({
+        data: dto.schedules.map((s) => ({
+          groupId: id,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        })),
+      });
+
+      // Return updated group with schedules
+      return tx.group.findUnique({
+        where: { id },
+        include: {
+          lessonSchedules: {
+            orderBy: { dayOfWeek: 'asc' },
+          },
+        },
+      });
+    });
+
+    this.logger.log(
+      `Updated schedules for group ${id}: ${dto.schedules.length} schedule(s)`,
+    );
+
+    return {
+      success: true,
+      code: 0,
+      data: updatedGroup,
+      message: 'Schedules updated successfully',
+    };
+  }
+
+  /**
+   * Update group discounts (replace all)
+   */
+  async updateDiscounts(
+    id: number,
+    dto: import('./dto').UpdateGroupDiscountsDto,
+  ) {
+    // 1. Validate group exists
+    await this.findOneRaw(id);
+
+    // 2. Validate no duplicate months (if discounts provided)
+    if (dto.discounts && dto.discounts.length > 0) {
+      const months = dto.discounts.map((d) => d.months);
+      const uniqueMonths = new Set(months);
+      if (uniqueMonths.size !== months.length) {
+        throw new BadRequestException(
+          'Duplicate discount months are not allowed. Each month value can only appear once.',
+        );
+      }
+    }
+
+    // 3. Replace all discounts in transaction
+    const updatedGroup = await this.prisma.$transaction(async (tx) => {
+      // Soft delete existing discounts
+      await tx.groupDiscount.updateMany({
+        where: { groupId: id, isDeleted: false },
+        data: {
+          isDeleted: true,
+          deletedAt: new Date(),
+        },
+      });
+
+      // Create new discounts (if provided)
+      if (dto.discounts && dto.discounts.length > 0) {
+        await tx.groupDiscount.createMany({
+          data: dto.discounts.map((d) => ({
+            groupId: id,
+            months: d.months,
+            discountAmount: d.discountAmount,
+          })),
+        });
+      }
+
+      // Return updated group with discounts
+      return tx.group.findUnique({
+        where: { id },
+        include: {
+          groupDiscounts: {
+            where: { isDeleted: false },
+            orderBy: { months: 'asc' },
+          },
+        },
+      });
+    });
+
+    this.logger.log(
+      `Updated discounts for group ${id}: ${dto.discounts?.length || 0} discount(s)`,
+    );
+
+    return {
+      success: true,
+      code: 0,
+      data: updatedGroup,
+      message: 'Discounts updated successfully',
+    };
+  }
 }
