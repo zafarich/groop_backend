@@ -712,20 +712,66 @@ export class TelegramService {
       return;
     }
 
-    // Calculate total amount
-    const monthlyPrice = Number(group.monthlyPrice);
-    let totalAmount = monthlyPrice * months;
-    let discountAmount = 0;
-
-    if (months > 1 && group.groupDiscounts.length > 0) {
-      discountAmount = Number(group.groupDiscounts[0].discountAmount);
-      totalAmount = monthlyPrice * months - discountAmount;
-    }
-
-    // Format price
+    // Format price helper
     const formatPrice = (price: number) => {
       return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
     };
+
+    // Check for student's custom price from enrollment
+    let effectiveMonthlyPrice = Number(group.monthlyPrice);
+    let hasCustomPrice = false;
+
+    if (telegramUser.user) {
+      // Get student record for this center
+      const student = await this.prisma.student.findFirst({
+        where: {
+          userId: telegramUser.user.id,
+          centerId: bot.centerId,
+          isDeleted: false,
+        },
+      });
+
+      if (student) {
+        // Get enrollment with custom price
+        const enrollment = await this.prisma.enrollment.findUnique({
+          where: {
+            groupId_studentId: {
+              groupId: groupId,
+              studentId: student.id,
+            },
+          },
+        });
+
+        if (enrollment && enrollment.customMonthlyPrice !== null) {
+          // Check if custom price is within validity period
+          const now = new Date();
+          const isAfterStart =
+            !enrollment.discountStartDate ||
+            now >= enrollment.discountStartDate;
+          const isBeforeEnd =
+            !enrollment.discountEndDate || now <= enrollment.discountEndDate;
+
+          if (isAfterStart && isBeforeEnd) {
+            effectiveMonthlyPrice = Number(enrollment.customMonthlyPrice);
+            hasCustomPrice = true;
+            this.logger.log(
+              `Using custom monthly price ${effectiveMonthlyPrice} for student ${student.id} in group ${groupId}`,
+            );
+          }
+        }
+      }
+    }
+
+    // Calculate total amount using effective price
+    let totalAmount = effectiveMonthlyPrice * months;
+    let discountAmount = 0;
+
+    // Apply group discounts only if no custom price is set
+    // (custom price already includes any applicable discount)
+    if (!hasCustomPrice && months > 1 && group.groupDiscounts.length > 0) {
+      discountAmount = Number(group.groupDiscounts[0].discountAmount);
+      totalAmount = effectiveMonthlyPrice * months - discountAmount;
+    }
 
     // Save payment intent to StudentBotState
     await this.prisma.studentBotState.upsert({
@@ -744,7 +790,8 @@ export class TelegramService {
           months: months,
           totalAmount,
           discountAmount,
-          monthlyPrice,
+          monthlyPrice: effectiveMonthlyPrice,
+          hasCustomPrice,
         },
       },
       create: {
@@ -758,7 +805,8 @@ export class TelegramService {
           months: months,
           totalAmount,
           discountAmount,
-          monthlyPrice,
+          monthlyPrice: effectiveMonthlyPrice,
+          hasCustomPrice,
         },
       },
     });
