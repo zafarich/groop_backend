@@ -2158,20 +2158,13 @@ export class TelegramService {
       return;
     }
 
-    // Calculate months and amount
-    let months = 1;
-    let amount = Number(group.monthlyPrice);
+    // Get student and enrollment to check for custom pricing
+    let student: any = null;
+    let enrollment: any = null;
+    let baseMonthlyPrice = Number(group.monthlyPrice);
 
-    if (paymentOption > 1) {
-      const discount = group.groupDiscounts[paymentOption - 2];
-      months = discount.months;
-      amount =
-        Number(group.monthlyPrice) * months - Number(discount.discountAmount);
-    }
-
-    // Check for existing pending payment (one-payment-at-a-time enforcement)
     if (telegramUser.user) {
-      const student = await this.prisma.student.findFirst({
+      student = await this.prisma.student.findFirst({
         where: {
           userId: telegramUser.user.id,
           centerId: bot.centerId,
@@ -2180,23 +2173,55 @@ export class TelegramService {
       });
 
       if (student) {
-        const existingPendingPayment = await this.prisma.payment.findFirst({
+        enrollment = await this.prisma.enrollment.findFirst({
           where: {
             studentId: student.id,
             groupId: group.id,
-            status: 'PENDING',
             isDeleted: false,
           },
         });
 
-        if (existingPendingPayment) {
-          await this.sendMessageToUser(
-            bot,
-            telegramUser.chatId || '',
-            "❌ Sizda bu guruh uchun kutilayotgan to'lov mavjud. Avval uni yakunlang.",
+        // Use custom price if set, otherwise use group price
+        if (
+          enrollment?.customMonthlyPrice !== null &&
+          enrollment?.customMonthlyPrice !== undefined
+        ) {
+          baseMonthlyPrice = Number(enrollment.customMonthlyPrice);
+          this.logger.log(
+            `Using custom price for student ${student.id}: ${baseMonthlyPrice} (group price: ${Number(group.monthlyPrice)})`,
           );
-          return;
         }
+      }
+    }
+
+    // Calculate months and amount
+    let months = 1;
+    let amount = baseMonthlyPrice;
+
+    if (paymentOption > 1) {
+      const discount = group.groupDiscounts[paymentOption - 2];
+      months = discount.months;
+      amount = baseMonthlyPrice * months - Number(discount.discountAmount);
+    }
+
+    // Check for existing pending payment (one-payment-at-a-time enforcement)
+    if (student) {
+      const existingPendingPayment = await this.prisma.payment.findFirst({
+        where: {
+          studentId: student.id,
+          groupId: group.id,
+          status: 'PENDING',
+          isDeleted: false,
+        },
+      });
+
+      if (existingPendingPayment) {
+        await this.sendMessageToUser(
+          bot,
+          telegramUser.chatId || '',
+          "❌ Sizda bu guruh uchun kutilayotgan to'lov mavjud. Avval uni yakunlang.",
+        );
+        return;
       }
     }
 
