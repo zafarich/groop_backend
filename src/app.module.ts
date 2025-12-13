@@ -21,6 +21,7 @@ import { EventsModule } from './modules/events/events.module';
 import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
 import { FreezeModule } from './modules/freeze/freeze.module';
 import { RefundModule } from './modules/refund/refund.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { RefundModule } from './modules/refund/refund.module';
     EnrollmentsModule,
     FreezeModule,
     RefundModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [

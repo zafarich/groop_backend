@@ -768,6 +768,10 @@ model Payment {
   // Notes
   notes           String?  @db.Text
   
+  // Receipt image (Telegram file ID)
+  receiptFileId   String?  // Telegram photo file_id for receipt image
+  receiptPath     String?  // Local file path for saved receipt image
+  
   // Soft delete
   isDeleted       Boolean  @default(false)
   deletedAt       DateTime?

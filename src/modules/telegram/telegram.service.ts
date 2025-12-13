@@ -2489,8 +2489,10 @@ export class TelegramService {
         currency: 'UZS',
         status: 'PENDING',
         paymentMethod: 'BANK_TRANSFER',
-        notes: `Receipt: ${receiptFilePath}\nMonths: ${months}\nCaption: ${message.caption || 'N/A'}`,
+        notes: `Months: ${months}\nCaption: ${message.caption || 'N/A'}`,
         periodStart: new Date(),
+        receiptFileId: fileId, // Store Telegram file ID for receipt image
+        receiptPath: receiptFilePath, // Store local file path for receipt image
       },
     });
 
